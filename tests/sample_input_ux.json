@@ -1,0 +1,20 @@
+{
+  "learning_request": {
+    "topic": "UX Design",
+    "description": "I want to start from scratch, learn user research and wireframing, and build an introductory portfolio project.",
+    "level": "beginner"
+  },
+  "preferences": {
+    "language": "en",
+    "format": "recorded_online",
+    "learning_style": "practical",
+    "certificate": null
+  },
+  "constraints": {
+    "budget": {"mode": "unrestricted", "max_amount": null, "currency": null},
+    "location": null,
+    "weekly_hours": 6,
+    "duration": null
+  },
+  "settings": {"hard_constraints": []}
+}
