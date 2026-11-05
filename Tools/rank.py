@@ -1,0 +1,164 @@
+"""Step 05 — deterministic course filtering, scoring and selection.
+
+LLM relevance judgments are supplied as bounded, auditable assessments.
+Only source-evidenced course records that passed Step 04 enter this module.
+"""
+from __future__ import annotations
+
+import re
+from typing import Literal
+
+from pydantic import Field
+
+from Agent.needs_schema import LearningNeedsProfile, verify_profile_against_input
+from app.schemas import CourseAdvisorInput, StrictModel
+from Tools.search import canonical_url
+from Tools.validate import CourseReview, CourseDraft, course_identity
+
+WEIGHTS = {"topic": 35, "level": 25, "intent": 25, "pedagogy": 15}
+
+
+class FitAssessment(StrictModel):
+    """Human/LLM judgments on a 0–5 scale; not a verified external rating."""
+    course_url: str
+    topic: int = Field(ge=0, le=5)
+    level: int = Field(ge=0, le=5)
+    intent: int = Field(ge=0, le=5)
+    pedagogy: int = Field(ge=0, le=5)
+    reason_fa: str = Field(min_length=10, max_length=600)
+
+
+class RankedCourse(StrictModel):
+    course: CourseDraft
+    match_score: int = Field(ge=0, le=100)
+    reason_fa: str
+    score_breakdown: dict[str, int]
+
+
+class RankingResult(StrictModel):
+    status: Literal["ready", "insufficient_verified_courses"]
+    selected: list[RankedCourse]
+    eligible_count: int
+    excluded_count: int
+    warnings: list[str] = Field(default_factory=list)
+
+
+def _norm(value: str | None) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip().casefold())
+
+
+def _match_hard_constraint(field: str, course: CourseDraft,
+                           request: CourseAdvisorInput) -> bool:
+    """Fail closed: missing/ambiguous course facts never satisfy a hard rule.
+
+    Only exact, documented equivalences are recognized; numeric prices,
+    scheduling and certificate/location are *not* in the current CourseDraft
+    structure. Hard rules involving those unavailable facts therefore fail.
+    """
+    p = request.preferences
+    c = request.constraints
+    if field == "language":
+        actual = _norm(course.language)
+        aliases = {"fa": {"fa", "فارسی", "persian", "farsi"},
+                   "en": {"en", "english", "انگلیسی"}}
+        target = _norm(p.language)
+        return bool(actual) and actual in aliases.get(target, {target})
+    if field == "format":
+        aliases = {
+            "in_person": {"in_person", "in person", "حضوری", "classroom"},
+            "recorded_online": {"recorded_online", "self paced", "self-paced", "آنلاین ضبط‌شده", "on demand", "on-demand"},
+            "live_online": {"live_online", "live online", "آنلاین زنده"},
+            "hybrid": {"hybrid", "ترکیبی", "blended"},
+        }
+        return _norm(course.format) in aliases.get(p.format or "", set())
+    if field == "budget":
+        if c.budget.mode == "unrestricted":
+            return True
+        if c.budget.mode == "free":
+            return _norm(course.price) in {"free", "رایگان", "0", "0.00", "free of charge"}
+        # A limited budget needs structured amount & currency; price string
+        # cannot be reliably compared across currencies or payment models.
+        return False
+    # Not enough structured fields to enforce these hard constraints yet.
+    return False
+
+
+def check_eligibility(review: CourseReview, request: CourseAdvisorInput) -> list[str]:
+    reasons = []
+    if review.status != "verified":
+        reasons.append("source_not_verified")
+        return reasons
+    if not review.record.name or not review.record.provider:
+        reasons.append("missing_identity")
+    if canonical_url(review.record.source_url) is None:
+        reasons.append("invalid_source_url")
+    for field in request.settings.hard_constraints:
+        if not _match_hard_constraint(field, review.record, request):
+            reasons.append(f"hard_constraint_unverified_or_mismatch:{field}")
+    return reasons
+
+
+def _score(a: FitAssessment) -> tuple[int, dict[str, int]]:
+    parts = {key: round(getattr(a, key) * weight / 5)
+             for key, weight in WEIGHTS.items()}
+    # total is derived from raw weighted scores to avoid accumulation of rounding.
+    total = round(sum(getattr(a, key) * weight / 5 for key, weight in WEIGHTS.items()))
+    return total, parts
+
+
+def rank_courses(reviews: list[CourseReview], assessments: list[FitAssessment],
+                 request: CourseAdvisorInput, profile: LearningNeedsProfile,
+                 target_count: int = 6) -> RankingResult:
+    """Return six diverse, grounded options or an explicit insufficiency state."""
+    verify_profile_against_input(profile, request)
+    if target_count != 6:
+        raise ValueError("MVP contract requires exactly 6 results.")
+    assessment_index = {}
+    for assessment in assessments:
+        key = canonical_url(assessment.course_url)
+        if key is None or key in assessment_index:
+            raise ValueError("Invalid/duplicate assessment URL.")
+        assessment_index[key] = assessment
+    eligible: dict[str, RankedCourse] = {}
+    excluded = 0
+    for review in reviews:
+        if check_eligibility(review, request):
+            excluded += 1
+            continue
+        url = canonical_url(review.record.source_url)
+        a = assessment_index.get(url)
+        if a is None:
+            excluded += 1
+            continue
+        score, breakdown = _score(a)
+        key = course_identity(review.record)
+        ranked = RankedCourse(course=review.record, match_score=score,
+                              reason_fa=a.reason_fa, score_breakdown=breakdown)
+        if key not in eligible or ranked.match_score > eligible[key].match_score:
+            eligible[key] = ranked
+    ordered = sorted(eligible.values(),
+                     key=lambda x: (-x.match_score, _norm(x.course.provider),
+                                    _norm(x.course.name), x.course.source_url))
+    # First pass: maximize institution diversity without inventing providers.
+    selected: list[RankedCourse] = []
+    used_providers: set[str] = set()
+    for item in ordered:
+        provider = _norm(item.course.provider)
+        if provider not in used_providers:
+            selected.append(item)
+            used_providers.add(provider)
+        if len(selected) == target_count:
+            break
+    # Requirement: six courses from different providers, so no same-provider
+    # fallback is permitted in the completed report.
+    sufficient = len(selected) == target_count
+    warnings = [] if sufficient else [
+        "Fewer than six eligible, source-backed courses from distinct providers.",
+        "Try further search; do not invent courses or relax hard constraints automatically.",
+    ]
+    return RankingResult(
+        status="ready" if sufficient else "insufficient_verified_courses",
+        selected=selected if sufficient else [],
+        eligible_count=len(eligible), excluded_count=excluded,
+        warnings=warnings,
+    )
