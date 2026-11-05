@@ -1,0 +1,26 @@
+{
+  "learning_request": {
+    "topic": "تحلیل داده",
+    "description": "می‌خواهم از صفر شروع کنم و تحلیل داده‌های کسب‌وکار را یاد بگیرم.",
+    "level": "beginner"
+  },
+  "preferences": {
+    "language": "fa",
+    "format": "recorded_online",
+    "learning_style": "practical",
+    "certificate": null
+  },
+  "constraints": {
+    "budget": {
+      "mode": "free",
+      "max_amount": null,
+      "currency": null
+    },
+    "location": null,
+    "weekly_hours": 5,
+    "duration": null
+  },
+  "settings": {
+    "hard_constraints": ["budget"]
+  }
+}
