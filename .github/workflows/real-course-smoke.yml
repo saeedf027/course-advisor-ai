@@ -4,13 +4,14 @@ on:
   workflow_dispatch:
     inputs:
       max_pages:
-        description: "Max LLM source pages; 6 is the conservative first test"
+        description: "Total source-page cap across adaptive rounds; higher means more API credits"
         required: true
-        default: "6"
+        default: "10"
         type: choice
         options:
           - "6"
           - "8"
+          - "9"
           - "10"
           - "12"
 
