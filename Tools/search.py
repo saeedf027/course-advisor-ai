@@ -7,7 +7,6 @@ from __future__ import annotations
 import asyncio
 import os
 import re
-from collections import defaultdict
 from typing import Literal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -111,6 +110,57 @@ def build_search_plan(request: CourseAdvisorInput, profile: LearningNeedsProfile
     prioritized += [q for q in proposed if q.kind == "preference"]
     prioritized += [q for q in proposed if q.kind == "specialized"]
     return SearchPlan(queries=prioritized[:max_queries])
+
+
+# Discovery ranking helps choose which pages to examine under a small API budget.
+# It is NOT evidence that a page is a genuine course.
+POSITIVE_TERMS = ("course", "courses/", "curriculum", "syllabus", "training",
+                  "academy", "learn/", "دوره", "آموزش", "سرفصل", "کلاس")
+NEGATIVE_TERMS = ("/blog/", "/tag/", "/category/", "/search", "/news/",
+                  "/forum/", "/questions/", "/articles/", "best courses",
+                  "top 10", "مقاله", "بهترین دوره", "لیست دوره")
+
+
+def candidate_priority(page: CandidatePage) -> int:
+    """Simple, explainable search-result relevance heuristic; not verification."""
+    path = urlsplit(page.url).path.casefold()
+    title = page.title.casefold()
+    content = path + " " + title
+    positive = sum(3 for term in POSITIVE_TERMS if term in content)
+    negative = sum(5 for term in NEGATIVE_TERMS if term in content)
+    matches = min(len(page.source_queries), 3) * 2
+    return positive - negative + matches
+
+
+def prioritize_candidates(candidates: list[CandidatePage], limit: int) -> list[CandidatePage]:
+    """Rank pages that resemble a single course, then diversify hostnames.
+
+    Weak candidates remain eligible when search coverage is poor. No source
+    is falsely verified or silently dropped based on page wording.
+    """
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    ordered = sorted(candidates, key=lambda p: (
+        -candidate_priority(p),
+        -(p.provider_search_score if p.provider_search_score is not None else -1),
+        p.url,
+    ))
+    selected = []
+    seen_hosts = set()
+    # Prefer distinct sources when only a few pages can be extracted.
+    for p in ordered:
+        hostname = urlsplit(p.url).hostname or ""
+        if hostname not in seen_hosts:
+            selected.append(p)
+            seen_hosts.add(hostname)
+            if len(selected) == limit:
+                return selected
+    for p in ordered:
+        if p not in selected:
+            selected.append(p)
+            if len(selected) == limit:
+                break
+    return selected
 
 
 def merge_results(query_results: list[tuple[str, list[dict]]], errors: list[str] | None = None) -> SearchBatch:
