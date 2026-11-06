@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       max_pages:
-        description: "Maximum pages to send to the model (1-12); higher costs more"
+        description: "Max LLM source pages; 6 is the conservative first test"
         required: true
-        default: "8"
+        default: "6"
         type: choice
         options:
           - "6"
@@ -20,7 +20,7 @@ permissions:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 7
     env:
       TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
       AVALAI_API_KEY: ${{ secrets.AVALAI_API_KEY }}
