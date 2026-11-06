@@ -2,7 +2,7 @@
 
 ## Status as of 2026-11-06
 - GitHub Actions PR #1 ran Python 3.12 offline tests: **45 passed**.
-- **Live API test not run**: runtime has no TAVILY_API_KEY, OPENROUTER_API_KEY, OPENROUTER_MODEL.
+- **Live API test not run**: runtime has no TAVILY_API_KEY, AVALAI_API_KEY (model optional).
 - Do not confuse offline mock passing with verified course discovery.
 
 ## Two required cases
@@ -10,7 +10,7 @@
 2. `tests/sample_input_ux.json`: English UX Design beginner, practical recorded preference, 6 hours/week.
 
 ## Execute locally, not in a public endpoint
-Create a private `.env` from `.env.example`. Fill keys securely and choose an OpenRouter model compatible with JSON-object responses.
+Create a private `.env` from `.env.example`. Fill keys securely and choose an AvalAI model compatible with JSON-object responses.
 
 ```bash
 python -m pytest -q
