@@ -54,6 +54,12 @@ async def main() -> int:
             extracted_pages=result.extracted_pages,
             structurally_verified_courses=result.reviewed_courses,
             selected_courses=len(result.ranking.selected),
+            preliminary_scored_courses=len(result.ranking.preview),
+            preliminary_match_scores=[
+                {"source_url": item.course.source_url.split("?")[0],
+                 "match_percent": item.match_score}
+                for item in result.ranking.preview
+            ],
             roadmap_steps=len(result.roadmap.steps) if result.roadmap else 0,
             report_file=report.name,
             diagnostics=result.diagnostics or {},

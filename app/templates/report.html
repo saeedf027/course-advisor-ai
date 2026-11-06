@@ -33,13 +33,13 @@ a{color:var(--blue);text-decoration:none;overflow-wrap:anywhere}a:hover{text-dec
   <header class="top"><div class="brand">راهنما <span>Course Advisor AI</span></div><button class="action" type="button" onclick="window.print()">چاپ / ذخیره PDF</button></header>
   <section class="hero"><span class="eyebrow">گزارش مشاوره آموزشی</span>{% if demo %} <span class="demo">فقط داده نمایشی</span>{% endif %}
     <h1>پیشنهادهای آموزشی برای {{ topic }}</h1>
-    <p>{% if ready %}شش دوره از مؤسسات متفاوت بر اساس اطلاعات ارائه‌شده{% else %}هنوز شش دوره معتبر متناسب با محدودیت‌های شما پیدا نشده است.{% endif %}</p>
+    <p>{% if ready %}شش دوره از مؤسسات متفاوت بر اساس اطلاعات ارائه‌شده{% elif partial %}نتایج اولیه دارای امتیاز تناسب؛ گزارش شش‌دوره‌ای هنوز کامل نیست.{% else %}هنوز شش دوره معتبر متناسب با محدودیت‌های شما پیدا نشده است.{% endif %}</p>
   </section>
   <section class="section" aria-label="اطلاعات مبنای پیشنهاد"><div class="section-head"><h2>اطلاعات مبنای پیشنهاد</h2><p>اطلاعاتی که هنگام ثبت درخواست وارد کرده‌اید و سطح تحلیل‌شده</p></div>
     <div class="summary">{% for item in summary %}<div class="summary-item"><b>{{ item.label }}</b>{{ item.value }}</div>{% endfor %}</div>
   </section>
-  {% if ready %}
-  <section class="section" id="courses"><div class="section-head"><h2>شش دوره پیشنهادی</h2><p>درصدها تخمین نسبی تناسب با نیاز کاربرند، نه احتمال قطعی موفقیت یا رتبه کیفیت مؤسسه.</p></div>
+  {% if ready or partial %}
+  <section class="section" id="courses"><div class="section-head"><h2>{% if ready %}شش دوره پیشنهادی{% else %}پیشنهادهای اولیه ({{ cards|length }} دوره از ۶ دوره موردنیاز){% endif %}</h2><p>درصدها تخمین نسبی تناسب با نیاز کاربرند، نه احتمال قطعی موفقیت یا رتبه کیفیت مؤسسه.</p></div>
     <div class="grid">
       {% for c in cards %}
       <article class="course"><div class="course-top"><span class="rank">پیشنهاد {{ loop.index }}</span><span class="score">{{ c.score }}٪ تناسب پیشنهادی</span></div>
@@ -68,7 +68,7 @@ a{color:var(--blue);text-decoration:none;overflow-wrap:anywhere}a:hover{text-dec
   </section>
   {% endif %}
   {% if not ready %}
-  <section class="section"><div class="notice"><strong>نتیجه ناکافی است</strong><p>برای حفظ اعتبار پیشنهادها، هیچ دوره‌ای حدسی به گزارش اضافه نشده است. می‌توانید محدوده جست‌وجو یا ترجیحات اختیاری را تغییر دهید.</p>{% for warning in warnings %}<p>{{ warning }}</p>{% endfor %}</div></section>
+  <section class="section"><div class="notice"><strong>نتیجه ناکافی است — گزارش نهایی هنوز کامل نیست</strong><p>{% if partial %}دوره‌های بالا فقط پیشنهادهای اولیه و منبع‌دار هستند؛ هنوز شش مؤسسه واجد شرایط پیدا نشده و Roadmap نهایی ساخته نشده است.{% else %}برای حفظ اعتبار پیشنهادها، هیچ دوره‌ای حدسی به گزارش اضافه نشده است.{% endif %} می‌توانید محدوده جست‌وجو یا ترجیحات اختیاری را تغییر دهید.</p>{% for warning in warnings %}<p>{{ warning }}</p>{% endfor %}</div></section>
   {% endif %}
   <footer class="footer">Course Advisor AI · گزارش HTML راست‌چین · {% if demo %}نمونه ساختگی برای آزمایش طراحی — فاقد دوره‌های تأییدشده{% else %}اطلاعات بر مبنای داده ورودی و رکوردهای منبع‌دار پردازش‌شده{% endif %}</footer>
 </main>
