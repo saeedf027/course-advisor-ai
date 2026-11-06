@@ -6,7 +6,7 @@
 - Do not confuse offline mock passing with verified course discovery.
 
 ## Two required cases
-1. `tests/sample_input.json`: Persian beginner data analysis, free hard budget, 5 hours/week.
+1. `tests/sample_input.json`: Persian beginner data analysis, free as a soft preference, 5 hours/week.
 2. `tests/sample_input_ux.json`: English UX Design beginner, practical recorded preference, 6 hours/week.
 
 ## Execute locally, not in a public endpoint
@@ -23,7 +23,7 @@ This consumes real credits: several search/extract requests and approximately on
 - No fabricated course cards or unverified URLs.
 - Exactly 6 unique providers per ready report.
 - Actual HTTPS course pages with evidence for name, provider, intended audience, syllabus topics, and level/duration.
-- Hard constraints checked: free budget on data analysis; no unknown pricing accepted as free.
+- Free is a soft preference in the data-analysis test: paid or unknown-priced courses remain eligible, with transparent suitability deductions. An explicitly hard free-only constraint still excludes paid or unknown pricing.
 - Beginner visual roadmap displays 3–5 ordered stages and links only to the six selected course URLs.
 - Two UTF-8 RTL HTML reports produced under `outputs/live/` with input summary.
 - Failed search produces an honest insufficiency report; do not pretend it passed.
@@ -42,3 +42,6 @@ This consumes real credits: several search/extract requests and approximately on
 
 ## Review checklist
 For each of the twelve intended suggestions: independently open the source URL, confirm the course is currently offered, compare titles and providers, inspect learning-level match, verify course duration and costs where mentioned, assess link accessibility and check that the Agent explanation actually follows evidence. Visual roadmap stages should be pedagogically logical and link to the correct real courses.
+
+## Preference behavior (2026-11-06)
+The default smoke input specifies `budget.mode=free` with `hard_constraints=[]`: free is a preference, not a veto. Python applies deductions of up to 7 points for budget, 4 for language, and 4 for delivery format, with smaller deductions for unknown facts. Model-estimated fit remains separated from factual source verification. Explicit user-selected hard constraints continue to be enforced; they must never be quietly relaxed.
