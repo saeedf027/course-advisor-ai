@@ -28,3 +28,11 @@ Valid JSON only, conforming to `CourseExtraction`.
 - A catalog, article comparing several courses, listing, or platform search result is non-course. Do not fabricate a single course from a list.
 - Use supplied search title and snippet ONLY as context for page identity. Required evidence quotes must be copied from the **extracted source_content**, never the search snippet.
 - Provide `rejection_reason` from the six enumerated categories for all non-course outputs. Never give arbitrary free-form rejection text.
+
+
+## Provider identification (critical)
+- Provider means the organization that **offers or publishes the specific course**, not a software mentioned in its syllabus and not the instructor unless the instructor is explicitly the provider.
+- Check page title, course header, brand/navigation, publisher/organizer line and page footer in the **source_content** for an exact provider name.
+- Copy the shortest literal evidence phrase from source_content for the provider. The `search_title` is a discovery hint ONLY and must never supply quote evidence on its own.
+- If the site identity is unambiguous but no matching provider name occurs in source_content, return null instead of guessing from the hostname or search snippet.
+- If an extracted quote includes visible Persian zero-width joiner or line-break differences, preserve the source wording as closely as possible. Never invent a quote.
