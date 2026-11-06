@@ -5,6 +5,8 @@ retrieved page text. This module does NOT invent or infer any facts.
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 from typing import Literal
 from urllib.parse import urlsplit
 
@@ -45,6 +47,21 @@ class CourseReview(StrictModel):
     reasons: list[str] = Field(default_factory=list)
 
 
+def normalize_evidence_text(value: str) -> str:
+    """Normalize typographic differences, not meaning.
+
+    The same literal words must appear together in the same source page.
+    This handles Unicode presentation forms, Persian/Arabic variants,
+    zero-width joiners and line breaks that often appear in extracted HTML.
+    No fuzzy/semantic matching is performed.
+    """
+    text = unicodedata.normalize("NFKC", value)
+    text = text.translate(str.maketrans({"ي": "ی", "ى": "ی", "ك": "ک"}))
+    text = re.sub(r"[\\u200c\\u200d\\u200e\\u200f\\ufeff]", " ", text)
+    text = re.sub(r"\\s+", " ", text)
+    return text.strip().casefold()
+
+
 def review_course(draft: CourseDraft, source_content: str,
                   extracted_url: str) -> CourseReview:
     """Conservative verification against one fetched source.
@@ -66,8 +83,10 @@ def review_course(draft: CourseDraft, source_content: str,
     if not draft.level and not draft.duration:
         missing.append("level_or_duration")
     evidence_fields: set[str] = set()
+    normalized_content = normalize_evidence_text(source_content)
     for ev in draft.evidence:
-        if canonical_url(ev.source_url) != src or ev.quote not in source_content:
+        if (canonical_url(ev.source_url) != src or
+                normalize_evidence_text(ev.quote) not in normalized_content):
             reasons.append(f"Unmatched evidence for {ev.field}.")
         else:
             evidence_fields.add(ev.field)
