@@ -16,7 +16,7 @@ def example_profile():
         "learning_intent": "یادگیری مقدماتی تحلیل داده‌های کسب‌وکار",
         "search_topics": ["مبانی تحلیل داده", "تحلیل داده با اکسل", "مصورسازی داده"],
         "suggested_prerequisites": ["مفاهیم اولیه صفحه گسترده"],
-        "hard_constraints": ["budget"],
+        "hard_constraints": [],
         "needs_learning_path": True,
         "notes": []
     }
@@ -34,10 +34,11 @@ def test_beginner_profile_matches_request():
 
 
 def test_reject_hard_constraint_mutation():
+    # Explicit mandatory budget must be preserved; soft default must not
+    # remove the protection for a truly hard user requirement.
     request = sample_request()
-    payload = example_profile()
-    payload["hard_constraints"] = []
-    profile = LearningNeedsProfile.model_validate(payload)
+    request.settings.hard_constraints = ["budget"]
+    profile = LearningNeedsProfile.model_validate(example_profile())
     with pytest.raises(ValueError):
         verify_profile_against_input(profile, request)
 
