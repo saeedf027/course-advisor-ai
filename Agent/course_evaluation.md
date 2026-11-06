@@ -40,3 +40,10 @@ Return JSON matching `FitAssessment` exactly. The system must validate this JSON
 - Clearly distinguish fit limitations known from evidence versus fields that are merely missing.
 - By default the user's free-budget, language and format preferences are **soft**: Python applies up to 15 points in transparent deductions (7 budget, 4 language, 4 format). Unknowns incur smaller deductions than known mismatches. Only explicitly declared hard constraints trigger deterministic exclusions.
 - The percentage expresses a heuristic model assessment rather than objective likelihood of learning success.
+
+## Evidence-only explanations
+- The **user's preference** for Persian, recorded classes or a free course does NOT prove the course has those attributes. Read ONLY the verified CourseDraft fields.
+- Do not say a course is in Persian/English, online, recorded, free/paid, certified or has a specific duration unless the corresponding attribute is explicitly present in the verified CourseDraft record.
+- If language, price, format or duration is null, state "نامشخص" where relevant, not an asserted positive or negative property. Never invent a credential/certificate: the current course model has no validated certificate field.
+- The reason must cite confirmed syllabus topics or confirmed course level whenever possible. Differentiate Data Analysis from adjacent fields such as Business Analysis, even if the word "analysis" appears in both.
+- A deterministic post-processing guard may replace the explanation if it contains unsupported delivery, price, language, duration or certificate claims.
