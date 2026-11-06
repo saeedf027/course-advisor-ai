@@ -111,3 +111,5 @@ def test_insufficient_mock_pages_do_not_create_fake_results():
     assert result.status == "insufficient_verified_courses"
     assert result.roadmap is None
     assert "نتیجه ناکافی است" in result.report_html
+    assert result.diagnostics is not None
+    assert sum(result.diagnostics.values()) == 0
