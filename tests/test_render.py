@@ -95,3 +95,18 @@ def test_saved_html_has_utf8_encoding(tmp_path):
     path = save_report(render_report(*fixture(), demo=True), tmp_path / "report.html")
     assert path.read_text(encoding="utf-8").startswith("<!doctype html>")
     assert path.suffix == ".html"
+
+def test_partial_preview_has_scores_but_no_completed_six_or_roadmap():
+    req, prof, complete, _ = fixture()
+    partial = RankingResult(
+        status="insufficient_verified_courses", selected=[],
+        preview=complete.selected[:3], eligible_count=3, excluded_count=0,
+        warnings=["Only three source-backed courses found."],
+    )
+    html = render_report(req, prof, partial, None, demo=True)
+    assert html.count('class="course"') == 3
+    assert "پیشنهادهای اولیه" in html
+    assert "نتیجه ناکافی است" in html
+    assert "شش دوره پیشنهادی" not in html
+    assert 'id="roadmap"' not in html
+    assert "٪ تناسب پیشنهادی" in html
