@@ -157,7 +157,7 @@ class Pipeline:
             if review.status == "incomplete":
                 return ("incomplete_source", None, ",".join(review.missing_fields[:8]))
             if review.status == "rejected":
-                return ("rejected_source", None, "source_evidence_mismatch")
+                return ("rejected_source", None, ",".join(review.reasons[:8]))
             return ("verified", review, None)
 
         extraction_results = await asyncio.gather(
