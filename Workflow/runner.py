@@ -80,7 +80,8 @@ class Pipeline:
             "incomplete_source": 0, "rejected_source": 0,
             "evaluation_errors": 0, "assessment_url_mismatch": 0,
             "hard_constraint_excluded": 0, "evaluations_skipped_insufficient": 0,
-            "eligible_before_evaluation": 0,
+            "eligible_before_evaluation": 0, "discovery_rounds": 0,
+            "pages_attempted": 0,
         }
 
         async def ask(prompt_file, payload, schema):
@@ -106,46 +107,41 @@ class Pipeline:
         plan = build_search_plan(request, profile)
         search_result: SearchBatch = await self.search(plan)
         all_candidates = search_result.candidates
-        chosen = prioritize_candidates(all_candidates, self.max_pages)
-        chosen_urls = {p.url for p in chosen}
-        # Public search metadata only, never raw scraped content or user prompts.
-        candidate_audit = [
-            {
-                "url": p.url.split("?")[0],
-                "title": p.title[:160],
-                "priority_score": candidate_priority(p),
-                "selected_for_extraction": p.url in chosen_urls,
-                "status": "pending" if p.url in chosen_urls else "not_selected_budget",
+        # Rank and diversify the full result pool once. The first six URLs
+        # form round one; later rounds use only remaining search results.
+        ordered = prioritize_candidates(all_candidates, len(all_candidates)) if all_candidates else []
+        page_budget = min(self.max_pages, len(ordered))
+        selected_urls: set[str] = set()
+        audit_by_url: dict[str, dict] = {}
+        candidate_audit: list[dict] = []
+        for candidate in all_candidates[:40]:
+            row = {
+                "url": candidate.url.split("?")[0],
+                "title": candidate.title[:160],
+                "priority_score": candidate_priority(candidate),
+                "selected_for_extraction": False,
+                "status": "not_selected_budget",
                 "reason": None,
             }
-            for p in all_candidates[:40]
-        ]
-        audit_by_url = {
-            p.url: row for p, row in zip(all_candidates[:40], candidate_audit)
-        }
-        search_result = search_result.model_copy(update={"candidates": chosen})
-        extraction: ExtractionBatch = await self.extract(
-            search_result, max_urls=self.max_pages
-        )
-        fetched = {canonical_url(page.url) for page in extraction.pages}
-        for candidate in chosen:
-            if canonical_url(candidate.url) not in fetched:
-                entry = audit_by_url.get(candidate.url)
-                if entry is not None:
-                    entry["status"] = "extract_failed"
+            candidate_audit.append(row)
+            audit_by_url[canonical_url(candidate.url)] = row
+
+        search_by_url = {canonical_url(c.url): c for c in all_candidates}
+        reviews: list[CourseReview] = []
+        eligible: list[CourseReview] = []
+        fetched_count = 0
+        rounds = 0
 
         async def extract_one(page: ExtractedPage):
+            candidate = search_by_url.get(canonical_url(page.url))
             try:
                 response = await ask(
                     "course_extraction.md",
                     {
-                        "source_url": page.url, "source_content": page.raw_content,
-                        "search_title": next(
-                            (c.title for c in chosen if canonical_url(c.url) == canonical_url(page.url)), ""
-                        ),
-                        "search_snippet": next(
-                            (c.snippet[:450] for c in chosen if canonical_url(c.url) == canonical_url(page.url)), ""
-                        ),
+                        "source_url": page.url,
+                        "source_content": page.raw_content,
+                        "search_title": candidate.title if candidate else "",
+                        "search_snippet": candidate.snippet[:450] if candidate else "",
                     },
                     CourseExtraction,
                 )
@@ -160,65 +156,88 @@ class Pipeline:
                 return ("rejected_source", None, ",".join(review.reasons[:8]))
             return ("verified", review, None)
 
-        extraction_results = await asyncio.gather(
-            *(extract_one(p) for p in extraction.pages[:self.max_pages])
-        )
-        reviews: list[CourseReview] = []
-        for page, (category, record, reason) in zip(
-            extraction.pages[:self.max_pages], extraction_results
-        ):
-            entry = audit_by_url.get(canonical_url(page.url))
-            if entry is not None:
-                entry["status"] = category
-                entry["reason"] = reason
-            if category == "verified":
-                reviews.append(record)
+        # Bounded adaptive search: no additional Tavily Search API requests.
+        # max_pages is a total upper bound, not per-round.
+        cursor = 0
+        while cursor < page_budget:
+            round_size = min(6 if rounds == 0 else 3, page_budget - cursor)
+            candidates = ordered[cursor:cursor + round_size]
+            cursor += len(candidates)
+            rounds += 1
+            selected_urls.update(canonical_url(c.url) for c in candidates)
+            for c in candidates:
+                audit = audit_by_url.get(canonical_url(c.url))
+                if audit is not None:
+                    audit["selected_for_extraction"] = True
+                    audit["status"] = "extract_failed"
+
+            sub_batch = search_result.model_copy(update={"candidates": candidates})
+            extraction: ExtractionBatch = await self.extract(
+                sub_batch, max_urls=len(candidates)
+            )
+            expected_urls = {canonical_url(c.url) for c in candidates}
+            # Only process URLs actually selected in this round; prevents
+            # unrelated provider results or faulty injected fixtures leaking in.
+            pages = [
+                p for p in extraction.pages
+                if canonical_url(p.url) in expected_urls
+            ]
+            fetched_count += len(pages)
+            outcomes = await asyncio.gather(*(extract_one(p) for p in pages))
+            for page, (category, review, reason) in zip(pages, outcomes):
+                row = audit_by_url.get(canonical_url(page.url))
+                if row is not None:
+                    row["status"] = category
+                    row["reason"] = reason
+                if category != "verified":
+                    diagnostics[category] += 1
+                    continue
+                reviews.append(review)
+                failures = check_eligibility(review, request)
+                if failures:
+                    diagnostics["hard_constraint_excluded"] += 1
+                    if row is not None:
+                        row["status"] = "hard_constraint_excluded"
+                        row["reason"] = ",".join(failures[:3])
+                else:
+                    eligible.append(review)
+            distinct = {
+                " ".join((r.record.provider or "").casefold().split())
+                for r in eligible if r.record.provider
+            }
+            if len(distinct) >= 6:
+                break
+
+        diagnostics["eligible_before_evaluation"] = len(eligible)
+        diagnostics["discovery_rounds"] = rounds
+        diagnostics["pages_attempted"] = len(selected_urls)
+        assessments: list[FitAssessment] = []
+
+        # Even if the verified sources are fewer than six, score them for an
+        # explicitly labeled preliminary report. No roadmap until six.
+        async def evaluate_one(review: CourseReview):
+            try:
+                result = await ask(
+                    "course_evaluation.md",
+                    {
+                        "request": request.model_dump(mode="json"),
+                        "needs": profile.model_dump(mode="json"),
+                        "course": review.record.model_dump(mode="json"),
+                    },
+                    FitAssessment,
+                )
+            except AgentCallError:
+                return ("evaluation_errors", None)
+            if canonical_url(result.course_url) != canonical_url(review.record.source_url):
+                return ("assessment_url_mismatch", None)
+            return ("ok", result)
+
+        evaluations = await asyncio.gather(*(evaluate_one(r) for r in eligible))
+        for category, assessment in evaluations:
+            if category == "ok":
+                assessments.append(assessment)
             else:
                 diagnostics[category] += 1
-
-        eligible = []
-        for review in reviews:
-            if check_eligibility(review, request):
-                diagnostics["hard_constraint_excluded"] += 1
-            else:
-                eligible.append(review)
-        diagnostics["eligible_before_evaluation"] = len(eligible)
-
-        # Check distinct providers before spending on one evaluation call
-        # per course. Incomplete sets cannot produce a six-provider report.
-        distinct_providers = {
-            " ".join((r.record.provider or "").casefold().split())
-            for r in eligible if r.record.provider
-        }
-        assessments: list[FitAssessment] = []
-        if len(distinct_providers) < 6:
-            diagnostics["evaluations_skipped_insufficient"] = len(eligible)
-        else:
-            async def evaluate_one(review: CourseReview):
-                try:
-                    result = await ask(
-                        "course_evaluation.md",
-                        {
-                            "request": request.model_dump(mode="json"),
-                            "needs": profile.model_dump(mode="json"),
-                            "course": review.record.model_dump(mode="json"),
-                        },
-                        FitAssessment,
-                    )
-                except AgentCallError:
-                    return ("evaluation_errors", None)
-                if canonical_url(result.course_url) != canonical_url(review.record.source_url):
-                    return ("assessment_url_mismatch", None)
-                return ("ok", result)
-
-            evaluations = await asyncio.gather(
-                *(evaluate_one(r) for r in eligible)
-            )
-            for category, assessment in evaluations:
-                if category == "ok":
-                    assessments.append(assessment)
-                else:
-                    diagnostics[category] += 1
 
         # rank_courses itself rechecks hard constraints and source eligibility.
         ranking = rank_courses(reviews, assessments, request, profile)
@@ -240,8 +259,8 @@ class Pipeline:
         html = render_report(request, profile, ranking, roadmap, demo=demo)
         return PipelineResult(
             status=ranking.status, report_html=html, ranking=ranking,
-            roadmap=roadmap, searched_pages=len(search_result.candidates),
-            extracted_pages=len(extraction.pages),
+            roadmap=roadmap, searched_pages=len(selected_urls),
+            extracted_pages=fetched_count,
             reviewed_courses=len(reviews), diagnostics=diagnostics,
             candidate_audit=candidate_audit,
         )
