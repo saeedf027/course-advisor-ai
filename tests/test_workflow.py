@@ -175,3 +175,36 @@ def test_fails_fast_when_verified_providers_fewer_than_six():
     assert result.status == "insufficient_verified_courses"
     assert agent.evaluation_calls == 0
     assert result.diagnostics["evaluations_skipped_insufficient"] == 3
+
+def test_source_audit_distinguishes_not_course_from_incomplete():
+    class RejectAllAgent(FakeAgent):
+        async def complete(self, *, prompt_file, payload, schema, retries=1):
+            if prompt_file == "course_extraction.md":
+                return CourseExtraction(
+                    is_course=False, course=None,
+                    rejection_reason="listing_or_search"
+                )
+            return await super().complete(
+                prompt_file=prompt_file, payload=payload,
+                schema=schema, retries=retries
+            )
+
+    result = asyncio.run(Pipeline(
+        agent=RejectAllAgent(), search=fake_search, extract=fake_extract
+    ).run(input_request(), demo=True))
+    assert result.status == "insufficient_verified_courses"
+    assert result.diagnostics["not_course_page"] == 6
+    assert len(result.candidate_audit) == 6
+    assert all(item["status"] == "not_course_page" for item in result.candidate_audit)
+    assert all(item["reason"] == "listing_or_search" for item in result.candidate_audit)
+    assert all("url" in item and "title" in item for item in result.candidate_audit)
+
+
+def test_source_audit_marks_not_selected_due_to_limit():
+    result = asyncio.run(Pipeline(
+        agent=FakeAgent(), search=fake_search, extract=fake_extract,
+        max_pages=3
+    ).run(input_request(), demo=True))
+    assert len(result.candidate_audit) == 6
+    assert sum(c["selected_for_extraction"] for c in result.candidate_audit) == 3
+    assert sum(c["status"] == "not_selected_budget" for c in result.candidate_audit) == 3
