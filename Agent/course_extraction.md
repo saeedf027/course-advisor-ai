@@ -4,8 +4,8 @@
 Given ONE extracted source page and its canonical URL, determine whether it is a **specific real course detail page**. Respond with ONE JSON object matching `Agent.extraction_schema.CourseExtraction`.
 
 ## Exact output structure
-- For a course page: `{"is_course": true, "course": { ...CourseDraft fields... }}`.
-- For a category page, blog, listicle, unrelated result or ambiguous content: `{"is_course": false, "course": null}`.
+- For a course page: `{"is_course": true, "course": { ...CourseDraft fields... }, "rejection_reason": null}`.
+- For a category page, blog, listicle, unrelated result or ambiguous content: `{"is_course": false, "course": null, "rejection_reason": "category_page|article_or_blog|listing_or_search|unrelated|insufficient_single_course_signal|unknown"}`. Select exactly ONE literal enum value, not the whole example.
 - Do not add other keys or surround the JSON with Markdown.
 
 ## Non-negotiable rules
@@ -22,3 +22,9 @@ Given ONE extracted source page and its canonical URL, determine whether it is a
 
 ## Output
 Valid JSON only, conforming to `CourseExtraction`.
+
+## Conservative but accurate course-page classification
+- A provider-owned detail page for one identifiable course counts as `is_course=true`, even if its audience, precise level, or syllabus are missing. Return a **partial** CourseDraft; the deterministic validator determines whether the evidence is sufficient. **Do not mark a real single-course page as non-course merely because it lacks some required fields.**
+- A catalog, article comparing several courses, listing, or platform search result is non-course. Do not fabricate a single course from a list.
+- Use supplied search title and snippet ONLY as context for page identity. Required evidence quotes must be copied from the **extracted source_content**, never the search snippet.
+- Provide `rejection_reason` from the six enumerated categories for all non-course outputs. Never give arbitrary free-form rejection text.
