@@ -112,9 +112,10 @@ def test_insufficient_mock_pages_do_not_create_fake_results():
     assert result.roadmap is None
     assert "نتیجه ناکافی است" in result.report_html
     assert result.diagnostics is not None
-    assert result.diagnostics["evaluations_skipped_insufficient"] == 3
     assert result.diagnostics["eligible_before_evaluation"] == 3
     assert result.diagnostics["evaluation_errors"] == 0
+    assert len(result.ranking.preview) == 3
+    assert "پیشنهادهای اولیه" in result.report_html
 
 def test_parallel_extraction_is_bounded_and_reduces_wall_clock():
     class ConcurrentAgent(FakeAgent):
@@ -155,7 +156,7 @@ def test_pipeline_rejects_unbounded_limits():
         Pipeline(agent_timeout_seconds=2)
 
 
-def test_fails_fast_when_verified_providers_fewer_than_six():
+def test_partial_results_are_scored_before_six_providers():
     class CountingAgent(FakeAgent):
         def __init__(self):
             self.evaluation_calls = 0
@@ -166,15 +167,24 @@ def test_fails_fast_when_verified_providers_fewer_than_six():
                 prompt_file=prompt_file, payload=payload,
                 schema=schema, retries=retries
             )
+
     agent = CountingAgent()
+
     async def only_three(batch, max_urls):
-        return ExtractionBatch(pages=[page(i) for i in range(3)])
+        chosen = {c.url for c in batch.candidates}
+        return ExtractionBatch(
+            pages=[page(i) for i in range(3) if page(i).url in chosen]
+        )
+
     result = asyncio.run(Pipeline(
         agent=agent, search=fake_search, extract=only_three,
     ).run(input_request(), demo=True))
     assert result.status == "insufficient_verified_courses"
-    assert agent.evaluation_calls == 0
-    assert result.diagnostics["evaluations_skipped_insufficient"] == 3
+    assert result.ranking.selected == []
+    assert len(result.ranking.preview) == 3
+    assert agent.evaluation_calls == 3
+    assert result.roadmap is None
+    assert result.diagnostics["discovery_rounds"] == 1
 
 def test_source_audit_distinguishes_not_course_from_incomplete():
     class RejectAllAgent(FakeAgent):
@@ -208,3 +218,66 @@ def test_source_audit_marks_not_selected_due_to_limit():
     assert len(result.candidate_audit) == 6
     assert sum(c["selected_for_extraction"] for c in result.candidate_audit) == 3
     assert sum(c["status"] == "not_selected_budget" for c in result.candidate_audit) == 3
+
+def test_adaptive_second_round_recovers_six_unique_courses():
+    calls = []
+    async def expanded_search(plan):
+        return SearchBatch(
+            candidates=[
+                CandidatePage(url=f"https://example.org/course/{i}",
+                              title=f"Course {i}", snippet="Mock result")
+                for i in range(9)
+            ],
+            searched_queries=[p.query for p in plan.queries],
+            total_results_before_dedup=9,
+        )
+
+    async def selective_extract(batch, max_urls):
+        calls.append([c.url for c in batch.candidates])
+        # Pages 0-2 are all non-returning, so first six produce only three
+        # verified courses; the next three complete a six-provider set.
+        selected = {
+            c.url for c in batch.candidates
+        }
+        return ExtractionBatch(pages=[
+            page(i) for i in range(3, 9) if page(i).url in selected
+        ])
+
+    result = asyncio.run(Pipeline(
+        agent=FakeAgent(), search=expanded_search,
+        extract=selective_extract, max_pages=9,
+    ).run(input_request(), demo=True))
+    assert result.status == "ready"
+    assert len(result.ranking.selected) == 6
+    assert result.roadmap is not None
+    assert len(calls) == 2
+    assert len(calls[0]) == 6
+    assert len(calls[1]) == 3
+    assert result.diagnostics["pages_attempted"] == 9
+    assert result.diagnostics["discovery_rounds"] == 2
+
+
+def test_adaptive_rounds_respect_strict_total_page_budget():
+    calls = []
+    async def many_results(plan):
+        return SearchBatch(
+            candidates=[
+                CandidatePage(url=f"https://example.org/course/{i}",
+                              title=f"Course {i}", snippet="Mock result")
+                for i in range(20)
+            ], searched_queries=[], total_results_before_dedup=20,
+        )
+
+    async def no_pages(batch, max_urls):
+        calls.extend(c.url for c in batch.candidates)
+        return ExtractionBatch()
+
+    result = asyncio.run(Pipeline(
+        agent=FakeAgent(), search=many_results, extract=no_pages,
+        max_pages=8,
+    ).run(input_request(), demo=True))
+    assert result.status == "insufficient_verified_courses"
+    assert result.diagnostics["pages_attempted"] == 8
+    assert result.diagnostics["discovery_rounds"] == 2
+    assert len(calls) == 8
+    assert len(result.ranking.preview) == 0
