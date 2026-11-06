@@ -57,8 +57,10 @@ async def main() -> int:
             )
             avalai_ok = profile.resolved_level == "beginner"
             print("AVALAI:", "PASS" if avalai_ok else "INVALID_RESPONSE")
-        except (AgentCallError, ValueError):
-            print("AVALAI: REQUEST_OR_SCHEMA_FAILED")
+        except AgentCallError as exc:
+            print("AVALAI:", str(exc))
+        except ValueError:
+            print("AVALAI: INVALID_CONFIGURATION")
     return 0 if tavily_ok and avalai_ok else 1
 
 if __name__ == "__main__":
