@@ -1,6 +1,6 @@
 """Explicit opt-in live E2E smoke test for two distinct learner topics.
 
-Uses real Tavily and OpenRouter calls. Do not run without an approved credit
+Uses real Tavily and AvalAI calls. Do not run without an approved credit
 budget and valid private .env credentials. Output files are gitignored.
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ async def main():
     if not args.confirm_live:
         parser.error("Live calls spend API credits: pass --confirm-live explicitly.")
     load_dotenv(ROOT / ".env")
-    missing = [name for name in ("TAVILY_API_KEY", "OPENROUTER_API_KEY", "OPENROUTER_MODEL")
+    missing = [name for name in ("TAVILY_API_KEY", "AVALAI_API_KEY")
                if not os.getenv(name)]
     if missing:
         print("Missing configuration: " + ", ".join(missing), file=sys.stderr)
