@@ -112,4 +112,66 @@ def test_insufficient_mock_pages_do_not_create_fake_results():
     assert result.roadmap is None
     assert "نتیجه ناکافی است" in result.report_html
     assert result.diagnostics is not None
-    assert sum(result.diagnostics.values()) == 0
+    assert result.diagnostics["evaluations_skipped_insufficient"] == 3
+    assert result.diagnostics["eligible_before_evaluation"] == 3
+    assert result.diagnostics["evaluation_errors"] == 0
+
+def test_parallel_extraction_is_bounded_and_reduces_wall_clock():
+    class ConcurrentAgent(FakeAgent):
+        def __init__(self):
+            self.active = 0
+            self.peak = 0
+        async def complete(self, *, prompt_file, payload, schema, retries=1):
+            if prompt_file == "course_extraction.md":
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+                await asyncio.sleep(0.03)
+                try:
+                    return await super().complete(
+                        prompt_file=prompt_file, payload=payload,
+                        schema=schema, retries=retries
+                    )
+                finally:
+                    self.active -= 1
+            return await super().complete(
+                prompt_file=prompt_file, payload=payload,
+                schema=schema, retries=retries
+            )
+
+    agent = ConcurrentAgent()
+    result = asyncio.run(Pipeline(
+        agent=agent, search=fake_search, extract=fake_extract,
+        llm_concurrency=2,
+    ).run(input_request(), demo=True))
+    assert result.status == "ready"
+    assert agent.peak == 2
+
+
+def test_pipeline_rejects_unbounded_limits():
+    import pytest
+    with pytest.raises(ValueError):
+        Pipeline(llm_concurrency=5)
+    with pytest.raises(ValueError):
+        Pipeline(agent_timeout_seconds=2)
+
+
+def test_fails_fast_when_verified_providers_fewer_than_six():
+    class CountingAgent(FakeAgent):
+        def __init__(self):
+            self.evaluation_calls = 0
+        async def complete(self, *, prompt_file, payload, schema, retries=1):
+            if prompt_file == "course_evaluation.md":
+                self.evaluation_calls += 1
+            return await super().complete(
+                prompt_file=prompt_file, payload=payload,
+                schema=schema, retries=retries
+            )
+    agent = CountingAgent()
+    async def only_three(batch, max_urls):
+        return ExtractionBatch(pages=[page(i) for i in range(3)])
+    result = asyncio.run(Pipeline(
+        agent=agent, search=fake_search, extract=only_three,
+    ).run(input_request(), demo=True))
+    assert result.status == "insufficient_verified_courses"
+    assert agent.evaluation_calls == 0
+    assert result.diagnostics["evaluations_skipped_insufficient"] == 3
