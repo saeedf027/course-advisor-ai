@@ -109,6 +109,69 @@ def _score(a: FitAssessment) -> tuple[int, dict[str, int]]:
     return total, parts
 
 
+def _preference_adjustment(course: CourseDraft, request: CourseAdvisorInput
+                           ) -> tuple[int, list[str]]:
+    """Small, explicit soft-preference adjustments. Never disqualify a course.
+
+    Maximum total adjustment is 15 points: budget 7, language 4, format 4.
+    The base suitability assessment remains based on topic, level, intent and
+    pedagogy. Unknown data receives a smaller deduction than a known mismatch.
+    Preferences marked as hard are handled separately by check_eligibility.
+    """
+    penalty = 0
+    notes: list[str] = []
+    hard = set(request.settings.hard_constraints)
+    if "budget" not in hard and request.constraints.budget.mode in {"free", "limited"}:
+        price = _norm(course.price)
+        if request.constraints.budget.mode == "free":
+            if price in {"free", "رایگان", "0", "0.00", "free of charge"}:
+                pass
+            elif not price:
+                penalty += 3
+                notes.append("رایگان‌بودن دوره تأیید نشده است")
+            else:
+                penalty += 7
+                notes.append("این دوره با ترجیح رایگان‌بودن تطابق ندارد")
+        elif not price:
+            penalty += 3
+            notes.append("میزان شهریه مشخص نیست")
+        else:
+            # Unstructured amounts cannot safely be compared to numeric budget.
+            penalty += 3
+            notes.append("تطابق شهریه با بودجه هنوز تأیید نشده است")
+
+    if "language" not in hard and request.preferences.language:
+        aliases = {
+            "fa": {"fa", "فارسی", "persian", "farsi"},
+            "en": {"en", "انگلیسی", "english"},
+        }
+        target = _norm(request.preferences.language)
+        actual = _norm(course.language)
+        if not actual:
+            penalty += 2
+            notes.append("زبان دوره مشخص نیست")
+        elif actual not in aliases.get(target, {target}):
+            penalty += 4
+            notes.append("زبان دوره با ترجیح شما یکسان نیست")
+
+    if "format" not in hard and request.preferences.format:
+        aliases = {
+            "in_person": {"in_person", "in person", "حضوری", "classroom"},
+            "recorded_online": {"recorded_online", "self paced", "self-paced",
+                                "آنلاین ضبط‌شده", "on demand", "on-demand"},
+            "live_online": {"live_online", "live online", "آنلاین زنده"},
+            "hybrid": {"hybrid", "ترکیبی", "blended"},
+        }
+        actual = _norm(course.format)
+        if not actual:
+            penalty += 2
+            notes.append("شیوه برگزاری دوره مشخص نیست")
+        elif actual not in aliases.get(request.preferences.format, set()):
+            penalty += 4
+            notes.append("شیوه برگزاری با ترجیح شما متفاوت است")
+    return penalty, notes
+
+
 def rank_courses(reviews: list[CourseReview], assessments: list[FitAssessment],
                  request: CourseAdvisorInput, profile: LearningNeedsProfile,
                  target_count: int = 6) -> RankingResult:
@@ -133,12 +196,20 @@ def rank_courses(reviews: list[CourseReview], assessments: list[FitAssessment],
         if a is None:
             excluded += 1
             continue
-        score, breakdown = _score(a)
+        base_score, breakdown = _score(a)
+        preference_penalty, preference_notes = _preference_adjustment(
+            review.record, request
+        )
+        score = max(0, base_score - preference_penalty)
+        breakdown["preference_adjustment"] = -preference_penalty
         key = course_identity(review.record)
+        combined_limitations = "؛ ".join(
+            [value for value in [a.limitations_fa, *preference_notes] if value]
+        ) or None
         ranked = RankedCourse(
             course=review.record, match_score=score,
             reason_fa=a.reason_fa, score_breakdown=breakdown,
-            limitations_fa=a.limitations_fa,
+            limitations_fa=combined_limitations,
             unknown_fields=[
                 key for key in ("audience", "topics", "level", "duration", "price", "language")
                 if not getattr(review.record, key)
