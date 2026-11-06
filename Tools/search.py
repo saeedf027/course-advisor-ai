@@ -87,10 +87,10 @@ def build_search_plan(request: CourseAdvisorInput, profile: LearningNeedsProfile
         if len(query) >= 4 and not any(x.query.casefold() == query.casefold() for x in proposed):
             proposed.append(SearchQuery(query=query, kind=kind))
 
-    add(f"{base} {level}online course syllabus training".strip(), "broad")
-    add(f"آموزش دوره {base} {'مقدماتی ' if level else ''}سرفصل ثبت نام", "broad")
+    add(f"دوره آموزشی {base} {'مقدماتی ' if level else ''}سرفصل مخاطبان ثبت نام", "broad")
+    add(f"{base} {'beginner ' if level else ''}course curriculum enrollment", "broad")
     for seed in seeds[1:4]:
-        add(f"{seed} {level}course curriculum", "specialized")
+        add(f"دوره {seed} سرفصل آموزش {'مبتدی' if level else ''}", "specialized")
 
     pref_parts = []
     if request.preferences.language:
