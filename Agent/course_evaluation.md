@@ -38,5 +38,5 @@ Return JSON matching `FitAssessment` exactly. The system must validate this JSON
 - Course suitability is graded 0–100 through four weighted 0–5 judgments. A course can be suitable at 80% without meeting all preferences.
 - A missing audience/level/topic detail is **unknown**, not proof of poor quality or evidence that the course satisfies it. Score uncertain dimensions neutrally (3/5) when there is not enough information; do not automatically assign 5/5.
 - Clearly distinguish fit limitations known from evidence versus fields that are merely missing.
-- Hard constraints such as explicit free-only budget remain deterministic exclusions in Python; a high match score cannot override them.
+- By default the user's free-budget, language and format preferences are **soft**: Python applies up to 15 points in transparent deductions (7 budget, 4 language, 4 format). Unknowns incur smaller deductions than known mismatches. Only explicitly declared hard constraints trigger deterministic exclusions.
 - The percentage expresses a heuristic model assessment rather than objective likelihood of learning success.
