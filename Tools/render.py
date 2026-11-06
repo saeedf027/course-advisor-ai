@@ -86,11 +86,13 @@ def render_report(request: CourseAdvisorInput, profile: LearningNeedsProfile,
         raise ValueError("Ready report must contain exactly six courses.")
     if ranking.status != "ready" and ranking.selected:
         raise ValueError("Insufficient results must not be shown as final recommendations.")
+    if ranking.status != "ready" and len(ranking.preview) > 5:
+        raise ValueError("A partial report must have fewer than six preview cards.")
     cards = []
-    if ranking.status == "ready":
+    if ranking.status == "ready" or ranking.preview:
         seen_urls: set[str] = set()
         seen_providers: set[str] = set()
-        for ranked in ranking.selected:
+        for ranked in (ranking.selected if ranking.status == "ready" else ranking.preview):
             course = ranked.course
             url = _source_url(course.source_url)
             provider = (course.provider or "").strip()
@@ -131,6 +133,7 @@ def render_report(request: CourseAdvisorInput, profile: LearningNeedsProfile,
         summary=_input_summary(request, profile), cards=cards,
         steps=steps, roadmap=roadmap, ready=ranking.status == "ready",
         warnings=ranking.warnings, demo=demo,
+        partial=ranking.status != "ready" and bool(cards),
     )
 
 
