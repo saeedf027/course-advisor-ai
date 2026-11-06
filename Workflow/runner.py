@@ -65,6 +65,8 @@ class Pipeline:
         self.max_pages = max_pages
         self.llm_concurrency = llm_concurrency
         self.agent_timeout_seconds = agent_timeout_seconds
+        self.stage = "initialized"
+        self.last_diagnostics: dict[str, int] = {}
 
     def _agent(self):
         if self.agent is None:
@@ -75,6 +77,7 @@ class Pipeline:
     async def run(self, request: CourseAdvisorInput, *, demo: bool = False) -> PipelineResult:
         agent = self._agent()
         semaphore = asyncio.Semaphore(self.llm_concurrency)
+        self.stage = "needs_analysis"
         diagnostics = {
             "agent_extraction_errors": 0, "not_course_page": 0,
             "incomplete_source": 0, "rejected_source": 0,
@@ -83,6 +86,8 @@ class Pipeline:
             "eligible_before_evaluation": 0, "discovery_rounds": 0,
             "pages_attempted": 0,
         }
+
+        self.last_diagnostics = diagnostics
 
         async def ask(prompt_file, payload, schema):
             # One API attempt per stage. This avoids 55s x retry x N pages.
@@ -104,6 +109,7 @@ class Pipeline:
             LearningNeedsProfile,
         )
         verify_profile_against_input(profile, request)
+        self.stage = "search"
         plan = build_search_plan(request, profile)
         search_result: SearchBatch = await self.search(plan)
         all_candidates = search_result.candidates
@@ -163,6 +169,7 @@ class Pipeline:
                 return ("rejected_source", None, ",".join(review.reasons[:8]))
             return ("verified", review, None)
 
+        self.stage = "source_extraction"
         # Bounded adaptive search: no additional Tavily Search API requests.
         # max_pages is a total upper bound, not per-round.
         cursor = 0
@@ -239,6 +246,7 @@ class Pipeline:
                 return ("assessment_url_mismatch", None)
             return ("ok", result)
 
+        self.stage = "course_evaluation"
         evaluations = await asyncio.gather(*(evaluate_one(r) for r in eligible))
         for category, assessment in evaluations:
             if category == "ok":
@@ -247,8 +255,10 @@ class Pipeline:
                 diagnostics[category] += 1
 
         # rank_courses itself rechecks hard constraints and source eligibility.
+        self.stage = "course_ranking"
         ranking = rank_courses(reviews, assessments, request, profile)
         roadmap: LearningRoadmap | None = None
+        self.stage = "roadmap_validation"
         if ranking.status == "ready" and profile.needs_learning_path:
             roadmap = await ask(
                 "roadmap_generation.md",
@@ -263,7 +273,9 @@ class Pipeline:
             )
             validate_roadmap(roadmap, request, profile, ranking)
 
+        self.stage = "report_rendering"
         html = render_report(request, profile, ranking, roadmap, demo=demo)
+        self.stage = "complete"
         return PipelineResult(
             status=ranking.status, report_html=html, ranking=ranking,
             roadmap=roadmap, searched_pages=len(selected_urls),
