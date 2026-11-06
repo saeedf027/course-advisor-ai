@@ -12,3 +12,5 @@ The report now displays the match percentage, reason for suitability, known limi
 
 ## MVP limitation
 A completed report still requires six distinct named providers. Missing sources are not fabricated to fill the list. Current course discovery and evidence matching still require live quality evaluation.
+
+**Identity integrity:** a fabricated or mismatched course-name/provider quote is explicitly rejected, even while optional fields may remain unknown.
