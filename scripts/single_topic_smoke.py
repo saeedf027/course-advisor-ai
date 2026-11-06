@@ -43,7 +43,7 @@ async def main() -> int:
         request = CourseAdvisorInput.model_validate_json(
             Path(args.input).read_text(encoding="utf-8")
         )
-        result = await Pipeline(max_pages=args.max_pages).run(request)
+        result = await asyncio.wait_for(\n            Pipeline(max_pages=args.max_pages, llm_concurrency=3,\n                     agent_timeout_seconds=30).run(request),\n            timeout=240,\n        )
         report = save_report(result.report_html, output / "report.html")
         result_info.update(
             status=result.status, candidate_pages=result.searched_pages,
