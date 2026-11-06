@@ -39,6 +39,7 @@ class PipelineResult:
     searched_pages: int
     extracted_pages: int
     reviewed_courses: int
+    diagnostics: dict[str, int] | None = None
 
 
 class Pipeline:
@@ -77,7 +78,12 @@ class Pipeline:
         )
         # Process the fetched content only. Never prompt with arbitrary direct URL fetching.
         review_list: list[CourseReview] = []
-        pages_by_url = {p.url: p for p in extraction.pages}
+        diagnostics = {
+            'agent_extraction_errors': 0, 'not_course_page': 0,
+            'incomplete_source': 0, 'rejected_source': 0,
+            'evaluation_errors': 0, 'assessment_url_mismatch': 0,
+            'hard_constraint_excluded': 0,
+        }
         for page in extraction.pages[:self.max_pages]:
             try:
                 result = await agent.complete(
@@ -86,12 +92,18 @@ class Pipeline:
                     schema=CourseExtraction,
                 )
             except AgentCallError:
+                diagnostics['agent_extraction_errors'] += 1
                 continue
             if not result.is_course or result.course is None:
+                diagnostics['not_course_page'] += 1
                 continue
             review = review_course(result.course, page.raw_content, page.url)
-            if review.status == "verified":
+            if review.status == 'verified':
                 review_list.append(review)
+            elif review.status == 'incomplete':
+                diagnostics['incomplete_source'] += 1
+            else:
+                diagnostics['rejected_source'] += 1
 
         assessments: list[FitAssessment] = []
         for review in review_list:
@@ -107,8 +119,15 @@ class Pipeline:
                 )
                 if assessment.course_url == review.record.source_url:
                     assessments.append(assessment)
+                else:
+                    diagnostics['assessment_url_mismatch'] += 1
             except AgentCallError:
+                diagnostics['evaluation_errors'] += 1
                 continue
+        from Tools.rank import check_eligibility
+        diagnostics['hard_constraint_excluded'] = sum(
+            bool(check_eligibility(r, request)) for r in review_list
+        )
         ranking = rank_courses(review_list, assessments, request, profile)
         roadmap: LearningRoadmap | None = None
         if ranking.status == "ready" and profile.needs_learning_path:
@@ -129,7 +148,7 @@ class Pipeline:
             status=ranking.status, report_html=html, ranking=ranking,
             roadmap=roadmap, searched_pages=len(search_result.candidates),
             extracted_pages=len(extraction.pages),
-            reviewed_courses=len(review_list),
+            reviewed_courses=len(review_list), diagnostics=diagnostics,
         )
 
 
