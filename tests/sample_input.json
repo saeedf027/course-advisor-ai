@@ -21,6 +21,6 @@
     "duration": null
   },
   "settings": {
-    "hard_constraints": ["budget"]
+    "hard_constraints": []
   }
 }
