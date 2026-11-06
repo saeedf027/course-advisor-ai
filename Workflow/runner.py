@@ -153,7 +153,9 @@ class Pipeline:
             if not response.is_course or response.course is None:
                 return ("not_course_page", None, response.rejection_reason or "unknown")
             candidate_title = candidate.title if candidate else ""
-            draft = recover_provider_from_page(\n                response.course, page.raw_content, candidate_title\n            )
+            draft = recover_provider_from_page(
+                response.course, page.raw_content, candidate_title
+            )
             review = review_course(draft, page.raw_content, page.url)
             if review.status == "incomplete":
                 return ("incomplete_source", None, ",".join(review.missing_fields[:8]))
