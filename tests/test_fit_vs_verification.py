@@ -82,10 +82,10 @@ def test_eighty_percent_fit_and_known_limitations():
     from Tools.rank import _score
     a = FitAssessment(
         course_url="https://example.org/course",
-        topic=5, level=4, intent=4, pedagogy=3,
+        topic=4, level=4, intent=4, pedagogy=4,
         reason_fa="این دوره مبانی موردنیاز را پوشش می‌دهد و برای شروع مناسب است.",
         limitations_fa="بخش تمرین عملی آن محدودتر از ترجیح کاربر است.",
     )
     score, parts = _score(a)
-    assert score == 84
+    assert score == 80
     assert a.limitations_fa is not None
