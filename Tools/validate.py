@@ -84,6 +84,11 @@ def review_course(draft: CourseDraft, source_content: str,
         else:
             unsupported.append(ev.field)
 
+    # A supplied but fabricated identity citation is a hard rejection.
+    if any(field in unsupported for field in ("name", "provider")):
+        return CourseReview(status="rejected", record=draft,
+                            reasons=["Unmatched evidence for course identity."])
+
     # We must be certain this is a named offering belonging to a provider.
     missing_core = [
         field for field in ("name", "provider")
