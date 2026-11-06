@@ -26,6 +26,7 @@ class FitAssessment(StrictModel):
     intent: int = Field(ge=0, le=5)
     pedagogy: int = Field(ge=0, le=5)
     reason_fa: str = Field(min_length=10, max_length=600)
+    limitations_fa: str | None = Field(default=None, max_length=400)
 
 
 class RankedCourse(StrictModel):
@@ -33,6 +34,8 @@ class RankedCourse(StrictModel):
     match_score: int = Field(ge=0, le=100)
     reason_fa: str
     score_breakdown: dict[str, int]
+    limitations_fa: str | None = None
+    unknown_fields: list[str] = Field(default_factory=list)
 
 
 class RankingResult(StrictModel):
@@ -132,8 +135,15 @@ def rank_courses(reviews: list[CourseReview], assessments: list[FitAssessment],
             continue
         score, breakdown = _score(a)
         key = course_identity(review.record)
-        ranked = RankedCourse(course=review.record, match_score=score,
-                              reason_fa=a.reason_fa, score_breakdown=breakdown)
+        ranked = RankedCourse(
+            course=review.record, match_score=score,
+            reason_fa=a.reason_fa, score_breakdown=breakdown,
+            limitations_fa=a.limitations_fa,
+            unknown_fields=[
+                key for key in ("audience", "topics", "level", "duration", "price", "language")
+                if not getattr(review.record, key)
+            ],
+        )
         if key not in eligible or ranked.match_score > eligible[key].match_score:
             eligible[key] = ranked
     ordered = sorted(eligible.values(),
