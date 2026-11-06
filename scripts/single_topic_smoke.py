@@ -43,7 +43,11 @@ async def main() -> int:
         request = CourseAdvisorInput.model_validate_json(
             Path(args.input).read_text(encoding="utf-8")
         )
-        result = await asyncio.wait_for(\n            Pipeline(max_pages=args.max_pages, llm_concurrency=3,\n                     agent_timeout_seconds=30).run(request),\n            timeout=240,\n        )
+        result = await asyncio.wait_for(
+            Pipeline(max_pages=args.max_pages, llm_concurrency=3,
+                     agent_timeout_seconds=30).run(request),
+            timeout=240,
+        )
         report = save_report(result.report_html, output / "report.html")
         result_info.update(
             status=result.status, candidate_pages=result.searched_pages,
@@ -56,6 +60,9 @@ async def main() -> int:
         )
         # Insufficient results is an expected report state, not a CI technical failure.
         code = 0
+    except asyncio.TimeoutError:
+        result_info.update(status="technical_error", error_type="PIPELINE_TIMEOUT_240S")
+        code = 1
     except Exception as exc:
         # Only type names go in GitHub Actions logs/artifact; no secrets or page data.
         result_info.update(status="technical_error", error_type=type(exc).__name__)
