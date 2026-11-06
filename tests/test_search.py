@@ -102,3 +102,34 @@ def test_course_candidates_diversify_hosts_in_small_budget():
     assert len(chosen) == 2
     from urllib.parse import urlsplit
     assert len({urlsplit(c.url).hostname for c in chosen}) == 2
+
+def test_realistic_course_details_win_over_catalog_and_homepage():
+    # Regression samples from the seventh live-run discovery audit.
+    pages = [
+        CandidatePage(
+            url="https://d-learn.ir/", title="مدرسه پردازش و تحلیل داده",
+            snippet="آموزش داده"
+        ),
+        CandidatePage(
+            url="https://faradars.org/how-to-learn/data-analysis",
+            title="مجموعه‌های آموزشی - فرادرس", snippet="تحلیل داده"
+        ),
+        CandidatePage(
+            url="https://www.tahlilgary.com/product/da",
+            title="دوره آموزش تحلیل داده، مهارت‌های غیر فنی - گروه تحلیلگری",
+            snippet="دوره تحلیل داده"
+        ),
+        CandidatePage(
+            url="https://cando.ac/course/data-science-step1",
+            title="تحلیل داده 1 در Data Science | آموزشگاه کندو",
+            snippet="آموزش تحلیل داده"
+        ),
+    ]
+    ranked = prioritize_candidates(pages, limit=4, topic="تحلیل داده")
+    assert {p.url for p in ranked[:2]} == {
+        "https://www.tahlilgary.com/product/da",
+        "https://cando.ac/course/data-science-step1",
+    }
+    assert candidate_priority(pages[2], "تحلیل داده") > candidate_priority(
+        pages[1], "تحلیل داده"
+    )

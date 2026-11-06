@@ -66,3 +66,43 @@ def test_extract_with_mocked_tavily_response():
     assert len(result.pages) == 1
     assert result.pages[0].raw_content == CONTENT
     assert result.failed_urls == []
+
+def test_provider_recovery_requires_literal_page_corroboration():
+    from Tools.validate import recover_provider_from_page
+    url = "https://academy.example.org/course/data"
+    draft = CourseDraft(
+        name="تحلیل داده", provider=None, level="مقدماتی",
+        source_url=url,
+        evidence=[
+            Evidence(field="name", source_url=url, quote="تحلیل داده"),
+            Evidence(field="level", source_url=url, quote="مقدماتی"),
+        ],
+    )
+    title = "دوره تحلیل داده | سون‌لرن"
+    raw = "تحلیل داده، سطح مقدماتی؛ برگزارکننده سون‌لرن"
+    recovered = recover_provider_from_page(draft, raw, title)
+    assert recovered.provider == "سون‌لرن"
+    assert any(e.field == "provider" for e in recovered.evidence)
+    assert review_course(recovered, raw, url).status == "verified"
+    no_corroboration = recover_provider_from_page(
+        draft, "تحلیل داده، مقدماتی", title
+    )
+    assert no_corroboration.provider is None
+
+
+def test_provider_recovery_does_not_override_forged_identity_evidence():
+    from Tools.validate import recover_provider_from_page
+    url = "https://academy.example.org/course/data"
+    draft = CourseDraft(
+        name="Data Course", provider="Other Institute", level="Beginner",
+        source_url=url,
+        evidence=[
+            Evidence(field="name", source_url=url, quote="Data Course"),
+            Evidence(field="level", source_url=url, quote="Beginner"),
+            Evidence(field="provider", source_url=url, quote="Imaginary Institute"),
+        ],
+    )
+    raw = "Data Course Beginner, offered by Example Academy."
+    result = recover_provider_from_page(draft, raw, "Data Course | Example Academy")
+    assert result.provider == "Other Institute"
+    assert review_course(result, raw, url).status == "rejected"

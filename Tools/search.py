@@ -112,42 +112,84 @@ def build_search_plan(request: CourseAdvisorInput, profile: LearningNeedsProfile
     return SearchPlan(queries=prioritized[:max_queries])
 
 
-# Discovery ranking helps choose which pages to examine under a small API budget.
-# It is NOT evidence that a page is a genuine course.
-POSITIVE_TERMS = ("course", "courses/", "curriculum", "syllabus", "training",
-                  "academy", "learn/", "دوره", "آموزش", "سرفصل", "کلاس")
-NEGATIVE_TERMS = ("/blog/", "/tag/", "/category/", "/search", "/news/",
-                  "/forum/", "/questions/", "/articles/", "best courses",
-                  "top 10", "مقاله", "بهترین دوره", "لیست دوره")
+# Search-result prioritization is only a retrieval heuristic, NOT factual verification.
+# URL shape is more useful than a generic "course" keyword in a site homepage.
+DETAIL_SEGMENTS = {"course", "courses", "lesson", "lessons", "product",
+                   "class", "classes", "module", "modules", "academies"}
+CATALOG_SEGMENTS = {"browse", "category", "categories", "search", "tag",
+                    "tags", "catalog", "subjects", "subject", "how-to-learn"}
+ARTICLE_SEGMENTS = {"blog", "article", "articles", "news", "forum",
+                    "forums", "questions", "resources", "roadmap"}
+OTHER_RESOURCE_DOMAINS = {"youtube.com", "youtu.be", "aparat.com",
+                          "reddit.com", "medium.com", "wikipedia.org"}
+COURSE_TITLE_SIGNALS = ("دوره", "کلاس", "آموزش", "course", "class", "training",
+                        "certificate", "module")
+LIST_TITLE_SIGNALS = ("بهترین دوره", "فهرست دوره", "لیست دوره",
+                      "مجموعه‌های آموزشی", "آموزشگاه", "نقشه راه",
+                      "best courses", "top courses", "learning path",
+                      "courses |", "courses -", "دوره‌های آموزشی")
 
 
-def candidate_priority(page: CandidatePage) -> int:
-    """Simple, explainable search-result relevance heuristic; not verification."""
-    path = urlsplit(page.url).path.casefold()
-    title = page.title.casefold()
-    content = path + " " + title
-    positive = sum(3 for term in POSITIVE_TERMS if term in content)
-    negative = sum(5 for term in NEGATIVE_TERMS if term in content)
-    matches = min(len(page.source_queries), 3) * 2
-    return positive - negative + matches
+def candidate_priority(page: CandidatePage, topic: str | None = None) -> int:
+    """Explainable ranking of likely *individual* course pages.
 
-
-def prioritize_candidates(candidates: list[CandidatePage], limit: int) -> list[CandidatePage]:
-    """Rank pages that resemble a single course, then diversify hostnames.
-
-    Weak candidates remain eligible when search coverage is poor. No source
-    is falsely verified or silently dropped based on page wording.
+    This does not certify provider identity or claim that a course is valid.
+    Search snippets and titles are untrusted and only control fetch priority.
     """
+    parsed = urlsplit(page.url)
+    host = (parsed.hostname or "").lower()
+    parts = [p.casefold() for p in parsed.path.split("/") if p]
+    text = (page.title + " " + page.snippet[:350]).casefold()
+    title = page.title.casefold()
+    score = 2 * min(len(page.source_queries), 3)
+    if any(host == bad or host.endswith("." + bad)
+           for bad in OTHER_RESOURCE_DOMAINS):
+        score -= 16
+    if parsed.path.lower().endswith((".pdf", ".mp4", ".docx")):
+        score -= 20
+    if not parts:  # A homepage, even when titled "Data Analysis Academy".
+        score -= 18
+    if any(p in ARTICLE_SEGMENTS for p in parts):
+        score -= 20
+    if any(p in CATALOG_SEGMENTS for p in parts):
+        score -= 18
+    if any(p in DETAIL_SEGMENTS and i + 1 < len(parts)
+           for i, p in enumerate(parts)):
+        score += 15
+    elif len(parts) >= 2 and any(p in DETAIL_SEGMENTS for p in parts):
+        score += 5
+    if any(signal in title for signal in COURSE_TITLE_SIGNALS):
+        score += 4
+    if any(signal in title for signal in LIST_TITLE_SIGNALS):
+        score -= 10
+    if any(p in {"watch", "video", "videos"} for p in parts):
+        score -= 12
+    if topic:
+        normalized_topic = " ".join(topic.casefold().split())
+        if normalized_topic in text:
+            score += 6
+        else:
+            tokens = [t for t in normalized_topic.split() if len(t) >= 3]
+            if tokens and all(t in text for t in tokens):
+                score += 3
+    # Tavily score is relevance to *query*, not course suitability.
+    if page.provider_search_score is not None:
+        score += round(min(1.0, max(0.0, page.provider_search_score)) * 2)
+    return score
+
+
+def prioritize_candidates(
+    candidates: list[CandidatePage], limit: int, topic: str | None = None
+) -> list[CandidatePage]:
+    """Prefer topic-relevant course details, then diversify site hosts."""
     if limit < 1:
         raise ValueError("limit must be positive")
     ordered = sorted(candidates, key=lambda p: (
-        -candidate_priority(p),
-        -(p.provider_search_score if p.provider_search_score is not None else -1),
+        -candidate_priority(p, topic),
         p.url,
     ))
-    selected = []
-    seen_hosts = set()
-    # Prefer distinct sources when only a few pages can be extracted.
+    selected: list[CandidatePage] = []
+    seen_hosts: set[str] = set()
     for p in ordered:
         hostname = urlsplit(p.url).hostname or ""
         if hostname not in seen_hosts:

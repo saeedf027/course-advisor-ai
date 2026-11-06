@@ -173,6 +173,36 @@ def _preference_adjustment(course: CourseDraft, request: CourseAdvisorInput
     return penalty, notes
 
 
+def _grounded_explanation(text: str | None, course: CourseDraft) -> str | None:
+    """Remove model assertions about facts absent from verified source fields.
+
+    Only narrow, explicit claims are detected; this is a safety backstop in
+    addition to the grounded evaluation prompt. When uncertain, return an
+    evidence-only fallback instead of reproducing unsupported model prose.
+    """
+    if text is None:
+        return None
+    missing_claim_patterns = [
+        (course.language, r"فارسی|انگلیسی|زبانِ? (?:آموزش|تدریس)|persian|english"),
+        (course.price, r"رایگان|شهریه|بدون هزینه|free (?:course|training)|قیمت"),
+        (course.format, r"آنلاین|حضوری|ضبط.?شده|آفلاین|self.paced|online"),
+        (course.duration, r"\\d+\\s*(?:ساعت|هفته|ماه)|مدت دوره"),
+        # Certificate isn't yet a documented/validated CourseDraft property.
+        (None, r"گواهینامه|گواهی[‌ ]?نامه|مدرک معتبر|certificate"),
+    ]
+    if not any(not fact and re.search(pattern, text, re.IGNORECASE)
+               for fact, pattern in missing_claim_patterns):
+        return text
+    topics = "، ".join(course.topics[:3])
+    details = f" سرفصل‌های مستند آن شامل {topics} است." if topics else (
+        f" سطح درج‌شده در منبع: {course.level}." if course.level else ""
+    )
+    return (
+        f"دوره «{course.name}» از «{course.provider}» با نیاز آموزشی "
+        f"شما مقایسه شده است.{details} سایر ویژگی‌های فاقد شاهد تأییدنشده‌اند."
+    )
+
+
 def rank_courses(reviews: list[CourseReview], assessments: list[FitAssessment],
                  request: CourseAdvisorInput, profile: LearningNeedsProfile,
                  target_count: int = 6) -> RankingResult:
@@ -204,12 +234,19 @@ def rank_courses(reviews: list[CourseReview], assessments: list[FitAssessment],
         score = max(0, base_score - preference_penalty)
         breakdown["preference_adjustment"] = -preference_penalty
         key = course_identity(review.record)
+        # Sanitize explanations *after* the deterministic source audit.
+        reason = _grounded_explanation(a.reason_fa, review.record)
+        limitation = _grounded_explanation(a.limitations_fa, review.record)
+        # A synthesized "reason" is not a limitation; prefer just the
+        # deterministic and confirmed preference mismatch notes.
+        if limitation != a.limitations_fa:
+            limitation = None
         combined_limitations = "؛ ".join(
-            [value for value in [a.limitations_fa, *preference_notes] if value]
+            [value for value in [limitation, *preference_notes] if value]
         ) or None
         ranked = RankedCourse(
             course=review.record, match_score=score,
-            reason_fa=a.reason_fa, score_breakdown=breakdown,
+            reason_fa=reason, score_breakdown=breakdown,
             limitations_fa=combined_limitations,
             unknown_fields=[
                 key for key in ("audience", "topics", "level", "duration", "price", "language")

@@ -155,3 +155,26 @@ def test_soft_language_and_format_reduce_score_without_exclusion():
     assert mismatch.match_score == 92
     assert "زبان" in mismatch.limitations_fa
     assert "شیوه" in mismatch.limitations_fa
+
+def test_unsupported_course_language_claim_is_removed_from_reason():
+    from Tools.rank import _grounded_explanation
+    draft = course(1).record
+    draft.language = None
+    result = _grounded_explanation(
+        "این دوره به زبان فارسی آموزش داده می‌شود و برای همه مناسب است.",
+        draft
+    )
+    assert "زبان فارسی" not in result
+    assert "Course 1" in result
+    assert "Institute 1" in result
+
+
+def test_source_supported_format_claim_is_preserved():
+    from Tools.rank import _grounded_explanation
+    draft = course(1).record
+    draft.format = "online"
+    result = _grounded_explanation(
+        "این دوره آنلاین ارائه می‌شود و موضوع را آموزش می‌دهد.",
+        draft
+    )
+    assert "آنلاین" in result
