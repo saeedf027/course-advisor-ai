@@ -65,11 +65,21 @@ class AvalAIClient:
                     content = data["choices"][0]["message"]["content"]
                     return schema.model_validate(json.loads(content))
                 except (httpx.HTTPError, ValueError, TypeError, KeyError,
-                        IndexError, ValidationError):
+                        IndexError, ValidationError) as exc:
                     if attempt == retries:
-                        raise AgentCallError(
-                            f"AvalAI structured response failed after {attempt + 1} attempts."
-                        ) from None
+                        if isinstance(exc, httpx.HTTPStatusError):
+                            category = f"HTTP_{exc.response.status_code}"
+                        elif isinstance(exc, httpx.ConnectError):
+                            category = "CONNECT_ERROR"
+                        elif isinstance(exc, httpx.TimeoutException):
+                            category = "TIMEOUT"
+                        elif isinstance(exc, ValidationError):
+                            category = "SCHEMA_MISMATCH"
+                        elif isinstance(exc, (ValueError, TypeError)):
+                            category = "INVALID_RESPONSE"
+                        else:
+                            category = "UNEXPECTED_STRUCTURE"
+                        raise AgentCallError(f"AvalAI failed: {category}.") from None
             raise AgentCallError("No structured response returned.")
         finally:
             if own:
