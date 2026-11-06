@@ -1,6 +1,6 @@
 """Step 08 — orchestrated Course Advisor AI MVP.
 
-A complete run requires live Tavily + OpenRouter credentials. Offline tests
+A complete run requires live Tavily + AvalAI credentials. Offline tests
 inject collaborators and do not perform network calls.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from app.schemas import CourseAdvisorInput
-from Agent.client import OpenRouterClient, AgentCallError
+from Agent.client import AvalAIClient, AgentCallError
 from Agent.extraction_schema import CourseExtraction
 from Agent.needs_schema import LearningNeedsProfile, verify_profile_against_input
 from Tools.search import build_search_plan, run_search, SearchBatch
@@ -55,7 +55,7 @@ class Pipeline:
     def _agent(self):
         if self.agent is None:
             load_dotenv(ROOT / ".env")
-            self.agent = OpenRouterClient()
+            self.agent = AvalAIClient()
         return self.agent
 
     async def run(self, request: CourseAdvisorInput, *, demo: bool = False) -> PipelineResult:
