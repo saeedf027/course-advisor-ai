@@ -13,3 +13,5 @@ The Course Advisor AI learner can specify desired budget, language, and class fo
 - Source-grounded course identity and HTTPS links are still mandatory; no fabricated courses are allowed.
 
 Automated tests cover scoring, unknown costs, other soft preferences, and explicitly hard budget behavior.
+
+Needs-analysis regression tests also assert the soft-preference default and preservation of an explicitly hard budget.
