@@ -94,10 +94,8 @@ def render_report(request: CourseAdvisorInput, profile: LearningNeedsProfile,
             course = ranked.course
             url = _source_url(course.source_url)
             provider = (course.provider or "").strip()
-            if not course.name or not provider or not course.audience or not course.topics:
-                raise ValueError("Missing required course details.")
-            if not (course.level or course.duration):
-                raise ValueError("Course needs level or duration.")
+            if not course.name or not provider:
+                raise ValueError("Missing required course identity.")
             provider_key = " ".join(provider.casefold().split())
             if url in seen_urls or provider_key in seen_providers:
                 raise ValueError("Duplicate URL or provider in final report.")
@@ -109,6 +107,8 @@ def render_report(request: CourseAdvisorInput, profile: LearningNeedsProfile,
                 "topics": course.topics, "language": course.language,
                 "format": course.format, "price": course.price,
                 "reason": ranked.reason_fa, "score": ranked.match_score, "url": url,
+                "limitations": ranked.limitations_fa,
+                "unknown_fields": ranked.unknown_fields,
             })
     steps = []
     if roadmap is not None:
