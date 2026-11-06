@@ -40,6 +40,8 @@ class AvalAIClient:
         if prompt_path.parent != (root / "Agent").resolve() or not prompt_path.is_file():
             raise AgentCallError("Unknown agent prompt.")
         instructions = prompt_path.read_text(encoding="utf-8")
+        instructions += "\n\nOUTPUT SCHEMA:\n" + json.dumps(schema.model_json_schema(), ensure_ascii=False)
+        instructions += "\nReturn exactly one JSON object matching the schema; no extra keys."
         own = self.client is None
         client = self.client or httpx.AsyncClient(timeout=55)
         try:
@@ -66,6 +68,12 @@ class AvalAIClient:
                     return schema.model_validate(json.loads(content))
                 except (httpx.HTTPError, ValueError, TypeError, KeyError,
                         IndexError, ValidationError) as exc:
+                    if isinstance(exc, ValidationError):
+                        # Log only field paths and error types; never input values.
+                        mismatches = ",".join(
+                            ".".join(str(part) for part in issue["loc"]) + ":" + issue["type"]
+                            for issue in exc.errors(include_url=False)[:8]
+                        )
                     if attempt == retries:
                         if isinstance(exc, httpx.HTTPStatusError):
                             category = f"HTTP_{exc.response.status_code}"
@@ -74,7 +82,7 @@ class AvalAIClient:
                         elif isinstance(exc, httpx.TimeoutException):
                             category = "TIMEOUT"
                         elif isinstance(exc, ValidationError):
-                            category = "SCHEMA_MISMATCH"
+                            category = "SCHEMA_MISMATCH(" + mismatches + ")"
                         elif isinstance(exc, (ValueError, TypeError)):
                             category = "INVALID_RESPONSE"
                         else:
