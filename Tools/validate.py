@@ -71,7 +71,7 @@ def recover_provider_from_page(
     if not source_content.strip() or not search_title.strip():
         return draft
     # A directory/listing title isn't reliable evidence of a provider.
-    candidates = re.split(r"\\s+[|｜]\\s+|\\s+[–—]\\s+", search_title)
+    candidates = re.split(r"\s+[|｜]\s+|\s+[–—]\s+", search_title)
     if len(candidates) < 2:
         return draft
     proposed = candidates[-1].strip()
