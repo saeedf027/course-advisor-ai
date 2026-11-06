@@ -56,6 +56,47 @@ def normalize_evidence_text(value: str) -> str:
     return text.strip().casefold()
 
 
+def recover_provider_from_page(
+    draft: CourseDraft, source_content: str, search_title: str
+) -> CourseDraft:
+    """Recover a provider missed by the Agent using *two* source signals.
+
+    Search title only proposes a provider candidate: an identifiable suffix
+    after a title delimiter. The same provider name MUST appear literally in
+    the extracted page text. A proposed provider is never accepted on title
+    alone, and already documented provider evidence is preserved.
+    """
+    if any(e.field == "provider" for e in draft.evidence):
+        return draft
+    if not source_content.strip() or not search_title.strip():
+        return draft
+    # A directory/listing title isn't reliable evidence of a provider.
+    candidates = re.split(r"\\s+[|｜]\\s+|\\s+[–—]\\s+", search_title)
+    if len(candidates) < 2:
+        return draft
+    proposed = candidates[-1].strip()
+    forbidden = ("دوره", "آموزش", "کلاس", "سرفصل", "course",
+                 "training", "data analysis", "داده", "مجازی")
+    if not 3 <= len(proposed) <= 85:
+        return draft
+    if normalize_evidence_text(proposed) in {
+        normalize_evidence_text(value) for value in forbidden
+    }:
+        return draft
+    if not normalize_evidence_text(proposed) in normalize_evidence_text(source_content):
+        return draft
+    if draft.provider and (
+        normalize_evidence_text(draft.provider) != normalize_evidence_text(proposed)
+    ):
+        return draft
+    updated = draft.model_copy(deep=True)
+    updated.provider = proposed
+    updated.evidence.append(
+        Evidence(field="provider", source_url=draft.source_url, quote=proposed)
+    )
+    return updated
+
+
 def review_course(draft: CourseDraft, source_content: str,
                   extracted_url: str) -> CourseReview:
     """Ground core identity strictly, while allowing absent optional fields.
