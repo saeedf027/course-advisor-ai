@@ -303,3 +303,52 @@ def test_pipeline_exposes_source_extraction_stage_when_provider_fails():
         asyncio.run(pipeline.run(input_request(), demo=True))
     assert pipeline.stage == "source_extraction"
     assert pipeline.last_diagnostics["pages_attempted"] == 0
+
+
+def test_invalid_agent_roadmap_keeps_six_courses_and_uses_safe_fallback():
+    class BadRoadmapAgent(FakeAgent):
+        async def complete(self, *, prompt_file, payload, schema, retries=1):
+            if prompt_file == "roadmap_generation.md":
+                result = await super().complete(
+                    prompt_file=prompt_file, payload=payload,
+                    schema=schema, retries=retries,
+                )
+                result.steps[0].recommended_course_urls[0] = "https://unverified.invalid/course"
+                return result
+            return await super().complete(
+                prompt_file=prompt_file, payload=payload,
+                schema=schema, retries=retries,
+            )
+
+    pipeline = Pipeline(
+        agent=BadRoadmapAgent(), search=fake_search, extract=fake_extract
+    )
+    result = asyncio.run(pipeline.run(input_request(), demo=True))
+    assert result.status == "ready"
+    assert len(result.ranking.selected) == 6
+    assert result.roadmap is not None
+    assert result.diagnostics["roadmap_fallback_used"] == 1
+    assert result.roadmap.steps[0].estimated_weeks_min is None
+    from Tools.roadmap import validate_roadmap
+    from Agent.needs_schema import LearningNeedsProfile
+    assert "id=\"roadmap\"" in result.report_html
+
+
+def test_roadmap_agent_failure_falls_back_without_adding_search_requests():
+    class BrokenRoadmapAgent(FakeAgent):
+        async def complete(self, *, prompt_file, payload, schema, retries=1):
+            if prompt_file == "roadmap_generation.md":
+                from Agent.client import AgentCallError
+                raise AgentCallError("Model did not return valid JSON")
+            return await super().complete(
+                prompt_file=prompt_file, payload=payload,
+                schema=schema, retries=retries,
+            )
+
+    pipeline = Pipeline(
+        agent=BrokenRoadmapAgent(), search=fake_search, extract=fake_extract
+    )
+    result = asyncio.run(pipeline.run(input_request(), demo=True))
+    assert result.status == "ready"
+    assert len(result.roadmap.steps) == 3
+    assert result.diagnostics["roadmap_fallback_used"] == 1

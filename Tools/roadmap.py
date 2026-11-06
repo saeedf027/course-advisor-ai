@@ -91,3 +91,49 @@ def validate_roadmap(
             covered.add(normalized)
     if covered != allowed:
         raise ValueError("Every selected course must be linked from at least one stage.")
+
+
+def build_safe_roadmap(
+    request: CourseAdvisorInput,
+    profile: LearningNeedsProfile,
+    ranking: RankingResult,
+) -> LearningRoadmap:
+    """Construct a conservative, grounded beginner roadmap without model calls.
+
+    Only linked courses selected and verified in the current ranking are used.
+    The stage labels describe an advisory sequence, not undocumented course
+    curricula, time requirements, or required prerequisites.
+    """
+    verify_profile_against_input(profile, request)
+    if not profile.needs_learning_path or ranking.status != "ready" or len(ranking.selected) != 6:
+        raise ValueError("Safe roadmap requires six source-backed beginner course options.")
+    courses = ranking.selected
+    groups = [courses[:2], courses[2:4], courses[4:6]]
+    labels = ["آشنایی و انتخاب نقطه شروع", "تمرین و توسعه مهارت", "پروژه و کاربرد عملی"]
+    goals = [
+        "ابتدا سرفصل‌های مستند گزینه‌های این مرحله را بررسی کنید و مباحث مقدماتی را انتخاب کنید.",
+        "مطالبی را که در دوره‌های منتخب واقعاً ارائه می‌شوند تمرین کنید و آموخته‌های خود را مرور کنید.",
+        "با مهارت‌های آموخته‌شده یک تمرین یا پروژه کوچک متناسب با هدف آموزشی خود تعریف کنید.",
+    ]
+    steps = [
+        RoadmapStep(
+            step_number=i + 1,
+            title=labels[i],
+            goal=goals[i],
+            skills=["بررسی محتوای دوره‌ها", "تمرین و خودارزیابی"],
+            prerequisites=[] if i == 0 else ["مرور مهارت‌های مرحله قبل"],
+            recommended_course_urls=[c.course.source_url for c in group],
+            estimated_weeks_min=None,
+            estimated_weeks_max=None,
+            estimated_time_note="این مراحل پیشنهادی‌اند؛ مدت و ترتیب دقیق از منبع دوره تأیید نشده است.",
+        )
+        for i, group in enumerate(groups)
+    ]
+    roadmap = LearningRoadmap(
+        title=f"مسیر پیشنهادی یادگیری {request.learning_request.topic}",
+        summary="این مسیر یک سازمان‌دهی پیشنهادی برای بررسی دوره‌های معتبر است؛ همه دوره‌ها الزامی نیستند.",
+        duration_disclaimer="زمان‌بندی و ترتیب مراحل تخمینی است و جایگزین برنامه رسمی مؤسسه‌ها نیست.",
+        steps=steps,
+    )
+    validate_roadmap(roadmap, request, profile, ranking)
+    return roadmap

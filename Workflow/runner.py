@@ -22,7 +22,7 @@ from Tools.validate import CourseReview, review_course, recover_provider_from_pa
 from Tools.rank import (
     FitAssessment, rank_courses, RankingResult, check_eligibility
 )
-from Tools.roadmap import LearningRoadmap, validate_roadmap
+from Tools.roadmap import LearningRoadmap, validate_roadmap, build_safe_roadmap
 from Tools.render import render_report, save_report
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,7 +84,7 @@ class Pipeline:
             "evaluation_errors": 0, "assessment_url_mismatch": 0,
             "hard_constraint_excluded": 0, "evaluations_skipped_insufficient": 0,
             "eligible_before_evaluation": 0, "discovery_rounds": 0,
-            "pages_attempted": 0,
+            "pages_attempted": 0, "roadmap_fallback_used": 0,
         }
 
         self.last_diagnostics = diagnostics
@@ -260,18 +260,25 @@ class Pipeline:
         roadmap: LearningRoadmap | None = None
         self.stage = "roadmap_validation"
         if ranking.status == "ready" and profile.needs_learning_path:
-            roadmap = await ask(
-                "roadmap_generation.md",
-                {
-                    "request": request.model_dump(mode="json"),
-                    "needs": profile.model_dump(mode="json"),
-                    "selected_courses": [
-                        item.model_dump(mode="json") for item in ranking.selected
-                    ],
-                },
-                LearningRoadmap,
-            )
-            validate_roadmap(roadmap, request, profile, ranking)
+            try:
+                roadmap = await ask(
+                    "roadmap_generation.md",
+                    {
+                        "request": request.model_dump(mode="json"),
+                        "needs": profile.model_dump(mode="json"),
+                        "selected_courses": [
+                            item.model_dump(mode="json") for item in ranking.selected
+                        ],
+                    },
+                    LearningRoadmap,
+                )
+                validate_roadmap(roadmap, request, profile, ranking)
+            except (AgentCallError, ValueError):
+                # A generated plan can omit or alter course URLs. Never discard
+                # six verified recommendations for an invalid AI roadmap;
+                # instead use a clearly advisory, source-linked fixed plan.
+                diagnostics["roadmap_fallback_used"] = 1
+                roadmap = build_safe_roadmap(request, profile, ranking)
 
         self.stage = "report_rendering"
         html = render_report(request, profile, ranking, roadmap, demo=demo)
