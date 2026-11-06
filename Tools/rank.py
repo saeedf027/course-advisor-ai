@@ -41,6 +41,7 @@ class RankedCourse(StrictModel):
 class RankingResult(StrictModel):
     status: Literal["ready", "insufficient_verified_courses"]
     selected: list[RankedCourse]
+    preview: list[RankedCourse] = Field(default_factory=list)
     eligible_count: int
     excluded_count: int
     warnings: list[str] = Field(default_factory=list)
@@ -240,6 +241,7 @@ def rank_courses(reviews: list[CourseReview], assessments: list[FitAssessment],
     return RankingResult(
         status="ready" if sufficient else "insufficient_verified_courses",
         selected=selected if sufficient else [],
+        preview=[] if sufficient else selected,
         eligible_count=len(eligible), excluded_count=excluded,
         warnings=warnings,
     )
