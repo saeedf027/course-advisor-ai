@@ -6,7 +6,7 @@ must be evidence-backed; strict constraints are never relaxed to fill six slots.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -15,7 +15,8 @@ from app.schemas import CourseAdvisorInput
 from Agent.client import AvalAIClient, AgentCallError
 from Agent.extraction_schema import CourseExtraction
 from Agent.needs_schema import LearningNeedsProfile, verify_profile_against_input
-from Tools.search import build_search_plan, run_search, SearchBatch, canonical_url
+from Tools.search import (build_search_plan, run_search, SearchBatch, canonical_url,
+                          prioritize_candidates, candidate_priority)
 from Tools.extract import extract_candidates, ExtractionBatch, ExtractedPage
 from Tools.validate import CourseReview, review_course
 from Tools.rank import (
@@ -41,6 +42,7 @@ class PipelineResult:
     extracted_pages: int
     reviewed_courses: int
     diagnostics: dict[str, int] | None = None
+    candidate_audit: list[dict] = field(default_factory=list)
 
 
 class Pipeline:
@@ -103,36 +105,72 @@ class Pipeline:
         verify_profile_against_input(profile, request)
         plan = build_search_plan(request, profile)
         search_result: SearchBatch = await self.search(plan)
-        search_result = search_result.model_copy(
-            update={"candidates": search_result.candidates[:self.max_pages]}
-        )
+        all_candidates = search_result.candidates
+        chosen = prioritize_candidates(all_candidates, self.max_pages)
+        chosen_urls = {p.url for p in chosen}
+        # Public search metadata only, never raw scraped content or user prompts.
+        candidate_audit = [
+            {
+                "url": p.url.split("?")[0],
+                "title": p.title[:160],
+                "priority_score": candidate_priority(p),
+                "selected_for_extraction": p.url in chosen_urls,
+                "status": "pending" if p.url in chosen_urls else "not_selected_budget",
+                "reason": None,
+            }
+            for p in all_candidates[:40]
+        ]
+        audit_by_url = {
+            p.url: row for p, row in zip(all_candidates[:40], candidate_audit)
+        }
+        search_result = search_result.model_copy(update={"candidates": chosen})
         extraction: ExtractionBatch = await self.extract(
             search_result, max_urls=self.max_pages
         )
+        fetched = {canonical_url(page.url) for page in extraction.pages}
+        for candidate in chosen:
+            if canonical_url(candidate.url) not in fetched:
+                entry = audit_by_url.get(candidate.url)
+                if entry is not None:
+                    entry["status"] = "extract_failed"
 
         async def extract_one(page: ExtractedPage):
             try:
                 response = await ask(
                     "course_extraction.md",
-                    {"source_url": page.url, "source_content": page.raw_content},
+                    {
+                        "source_url": page.url, "source_content": page.raw_content,
+                        "search_title": next(
+                            (c.title for c in chosen if canonical_url(c.url) == canonical_url(page.url)), ""
+                        ),
+                        "search_snippet": next(
+                            (c.snippet[:450] for c in chosen if canonical_url(c.url) == canonical_url(page.url)), ""
+                        ),
+                    },
                     CourseExtraction,
                 )
             except AgentCallError:
-                return ("agent_extraction_errors", None)
+                return ("agent_extraction_errors", None, "invalid_agent_response")
             if not response.is_course or response.course is None:
-                return ("not_course_page", None)
+                return ("not_course_page", None, response.rejection_reason or "unknown")
             review = review_course(response.course, page.raw_content, page.url)
             if review.status == "incomplete":
-                return ("incomplete_source", None)
+                return ("incomplete_source", None, ",".join(review.missing_fields[:8]))
             if review.status == "rejected":
-                return ("rejected_source", None)
-            return ("verified", review)
+                return ("rejected_source", None, "source_evidence_mismatch")
+            return ("verified", review, None)
 
         extraction_results = await asyncio.gather(
             *(extract_one(p) for p in extraction.pages[:self.max_pages])
         )
         reviews: list[CourseReview] = []
-        for category, record in extraction_results:
+        for page, (category, record, reason) in zip(
+            extraction.pages[:self.max_pages], extraction_results
+        ):
+            entry = audit_by_url.get(canonical_url(page.url))
+            if entry is not None:
+                entry["status"] = category
+                entry["reason"] = reason
             if category == "verified":
                 reviews.append(record)
             else:
@@ -205,6 +243,7 @@ class Pipeline:
             roadmap=roadmap, searched_pages=len(search_result.candidates),
             extracted_pages=len(extraction.pages),
             reviewed_courses=len(reviews), diagnostics=diagnostics,
+            candidate_audit=candidate_audit,
         )
 
 
