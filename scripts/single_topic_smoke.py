@@ -57,6 +57,7 @@ async def main() -> int:
             roadmap_steps=len(result.roadmap.steps) if result.roadmap else 0,
             report_file=report.name,
             diagnostics=result.diagnostics or {},
+            candidate_audit=result.candidate_audit,
         )
         # Insufficient results is an expected report state, not a CI technical failure.
         code = 0
