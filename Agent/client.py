@@ -1,4 +1,7 @@
-"""Minimal, bounded OpenRouter JSON client for the WAT agents."""
+"""Bounded, OpenAI-compatible JSON completion client using AvalAI.
+
+No credentials are stored in source code. Tests may inject httpx.AsyncClient.
+"""
 from __future__ import annotations
 
 import json
@@ -9,27 +12,29 @@ from typing import Any
 import httpx
 from pydantic import BaseModel, ValidationError
 
-ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+DEFAULT_BASE_URL = "https://api.avalai.ir/v1"
 
 
 class AgentCallError(RuntimeError):
-    """A model call failed or returned invalid structured output."""
+    """Model request failed; safe for public CI logs."""
 
 
-class OpenRouterClient:
+class AvalAIClient:
     def __init__(self, *, api_key: str | None = None, model: str | None = None,
-                 client: httpx.AsyncClient | None = None):
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        self.model = model or os.getenv("OPENROUTER_MODEL")
+                 base_url: str | None = None, client: httpx.AsyncClient | None = None):
+        self.api_key = api_key or os.getenv("AVALAI_API_KEY")
+        self.model = model or os.getenv("AVALAI_MODEL", "gpt-4o-mini")
+        self.base_url = (base_url or os.getenv("AVALAI_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
         if not self.api_key or not self.model:
-            raise AgentCallError("Set OPENROUTER_API_KEY and OPENROUTER_MODEL.")
+            raise AgentCallError("AVALAI_API_KEY or AVALAI_MODEL is missing.")
+        if not self.base_url.startswith("https://") or not self.base_url.endswith("/v1"):
+            raise AgentCallError("AVALAI_BASE_URL must be an HTTPS API v1 endpoint.")
         self.client = client
 
     async def complete(self, *, prompt_file: str, payload: dict[str, Any],
                        schema: type[BaseModel], retries: int = 1) -> BaseModel:
-        """Return Pydantic-validated JSON. Does not mutate user inputs."""
         if not 0 <= retries <= 2:
-            raise ValueError("retries must be between 0 and 2")
+            raise ValueError("retries must be 0..2")
         root = Path(__file__).resolve().parents[1]
         prompt_path = (root / "Agent" / prompt_file).resolve()
         if prompt_path.parent != (root / "Agent").resolve() or not prompt_path.is_file():
@@ -41,7 +46,7 @@ class OpenRouterClient:
             for attempt in range(retries + 1):
                 try:
                     response = await client.post(
-                        ENDPOINT,
+                        f"{self.base_url}/chat/completions",
                         headers={"Authorization": f"Bearer {self.api_key}",
                                  "Content-Type": "application/json"},
                         json={
@@ -51,28 +56,21 @@ class OpenRouterClient:
                             "response_format": {"type": "json_object"},
                             "messages": [
                                 {"role": "system", "content": instructions},
-                                {"role": "user", "content": json.dumps(
-                                    payload, ensure_ascii=False, default=str)},
+                                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
                             ],
                         },
                     )
                     response.raise_for_status()
-                    body = response.json()
-                    content = body["choices"][0]["message"]["content"]
-                    if not isinstance(content, str):
-                        raise ValueError("Model returned non-text JSON payload.")
-                    parsed = json.loads(content)
-                    return schema.model_validate(parsed)
-                except (httpx.HTTPError, ValueError, KeyError, IndexError,
-                        TypeError, ValidationError) as exc:
+                    data = response.json()
+                    content = data["choices"][0]["message"]["content"]
+                    return schema.model_validate(json.loads(content))
+                except (httpx.HTTPError, ValueError, TypeError, KeyError,
+                        IndexError, ValidationError):
                     if attempt == retries:
-                        # Never include raw API response, supplied page text,
-                        # user descriptions or credentials in the error message.
                         raise AgentCallError(
-                            f"OpenRouter structured response failed after {attempt + 1} attempts "
-                            f"({type(exc).__name__})."
+                            f"AvalAI structured response failed after {attempt + 1} attempts."
                         ) from None
-            raise AgentCallError("Model produced no valid output.")
+            raise AgentCallError("No structured response returned.")
         finally:
             if own:
                 await client.aclose()
