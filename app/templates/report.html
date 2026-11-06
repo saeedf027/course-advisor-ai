@@ -39,15 +39,15 @@ a{color:var(--blue);text-decoration:none;overflow-wrap:anywhere}a:hover{text-dec
     <div class="summary">{% for item in summary %}<div class="summary-item"><b>{{ item.label }}</b>{{ item.value }}</div>{% endfor %}</div>
   </section>
   {% if ready %}
-  <section class="section" id="courses"><div class="section-head"><h2>شش دوره پیشنهادی</h2><p>امتیازها شاخص نسبی تناسب‌اند؛ رتبه کیفیت مؤسسه یا تضمین نتیجه یادگیری نیستند.</p></div>
+  <section class="section" id="courses"><div class="section-head"><h2>شش دوره پیشنهادی</h2><p>درصدها تخمین نسبی تناسب با نیاز کاربرند، نه احتمال قطعی موفقیت یا رتبه کیفیت مؤسسه.</p></div>
     <div class="grid">
       {% for c in cards %}
-      <article class="course"><div class="course-top"><span class="rank">پیشنهاد {{ loop.index }}</span><span class="score">تناسب {{ c.score }} از ۱۰۰</span></div>
+      <article class="course"><div class="course-top"><span class="rank">پیشنهاد {{ loop.index }}</span><span class="score">{{ c.score }}٪ تناسب پیشنهادی</span></div>
         <div><h3>{{ c.name }}</h3><div class="provider">{{ c.provider }}</div></div>
         <div class="pills">{% if c.level %}<span class="pill">سطح: {{ c.level }}</span>{% endif %}{% if c.duration %}<span class="pill">مدت: {{ c.duration }}</span>{% endif %}{% if c.language %}<span class="pill">زبان: {{ c.language }}</span>{% endif %}{% if c.format %}<span class="pill">{{ c.format }}</span>{% endif %}{% if c.price %}<span class="pill">{{ c.price }}</span>{% endif %}</div>
-        <p><strong>مناسب برای:</strong> {{ c.audience }}</p>
-        <p><strong>سرفصل‌ها:</strong> {{ c.topics | join('، ') }}</p>
-        <p><strong>دلیل پیشنهاد:</strong> {{ c.reason }}</p>
+        <p><strong>مناسب برای:</strong> {{ c.audience or 'در منبع مشخص نشده' }}</p>
+        <p><strong>سرفصل‌ها:</strong> {{ (c.topics | join('، ')) if c.topics else 'سرفصل‌ها مشخص نشده‌اند' }}</p>
+        <p><strong>دلیل تناسب:</strong> {{ c.reason }}</p>{% if c.limitations %}<p><strong>محدودیت‌ها:</strong> {{ c.limitations }}</p>{% endif %}{% if c.unknown_fields %}<p class="note">اطلاعات نامشخص: {{ c.unknown_fields | join("، ") }}</p>{% endif %}
         <div class="source"><a href="{{ c.url }}" target="_blank" rel="noopener noreferrer">مشاهده منبع دوره</a></div>
       </article>
       {% endfor %}
