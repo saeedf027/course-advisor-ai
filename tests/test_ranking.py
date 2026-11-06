@@ -108,3 +108,50 @@ def test_missing_assessment_does_not_fabricate_score():
     result = rank_courses([course(i) for i in range(6)],
                           [assessment(i) for i in range(5)], request, profile)
     assert result.status == "insufficient_verified_courses"
+
+
+def test_free_is_soft_preference_when_not_explicitly_hard():
+    request, profile = inputs([])
+    assert check_eligibility(course(0, price="paid"), request) == []
+    reviews = [course(0, price="paid")] + [course(i) for i in range(1, 6)]
+    result = rank_courses(
+        reviews, [assessment(i) for i in range(6)], request, profile
+    )
+    assert result.status == "ready"
+    by_name = {item.course.name: item for item in result.selected}
+    assert by_name["Course 0"].match_score == 93
+    assert "رایگان" in by_name["Course 0"].limitations_fa
+    assert by_name["Course 1"].match_score == 100
+
+
+def test_unknown_price_is_penalty_not_exclusion_for_soft_budget():
+    request, profile = inputs([])
+    assert check_eligibility(course(0, price=None), request) == []
+    reviews = [course(0, price=None)] + [course(i) for i in range(1, 6)]
+    result = rank_courses(
+        reviews, [assessment(i) for i in range(6)], request, profile
+    )
+    assert result.status == "ready"
+    result_zero = next(x for x in result.selected if x.course.name == "Course 0")
+    assert result_zero.match_score == 97
+    assert "رایگان" in result_zero.limitations_fa
+
+
+def test_hard_budget_still_blocks_paid_or_unknown_courses():
+    request, _ = inputs(["budget"])
+    assert check_eligibility(course(0, price="paid"), request)
+    assert check_eligibility(course(0, price=None), request)
+
+
+def test_soft_language_and_format_reduce_score_without_exclusion():
+    request, profile = inputs([])
+    request.preferences.language = "fa"
+    request.preferences.format = "recorded_online"
+    reviews = [course(i) for i in range(6)]
+    reviews[0].record.language = "English"
+    reviews[0].record.format = "live_online"
+    result = rank_courses(reviews, [assessment(i) for i in range(6)], request, profile)
+    mismatch = next(x for x in result.selected if x.course.name == "Course 0")
+    assert mismatch.match_score == 92
+    assert "زبان" in mismatch.limitations_fa
+    assert "شیوه" in mismatch.limitations_fa
