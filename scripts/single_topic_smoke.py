@@ -39,13 +39,15 @@ async def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
     result_info = {"topic_id": "data_analysis",
                    "disclaimer": "Live API smoke test; source quality requires manual review."}
+    pipeline = None
     try:
         request = CourseAdvisorInput.model_validate_json(
             Path(args.input).read_text(encoding="utf-8")
         )
+        pipeline = Pipeline(max_pages=args.max_pages, llm_concurrency=3,
+                            agent_timeout_seconds=30)
         result = await asyncio.wait_for(
-            Pipeline(max_pages=args.max_pages, llm_concurrency=3,
-                     agent_timeout_seconds=30).run(request),
+            pipeline.run(request),
             timeout=240,
         )
         report = save_report(result.report_html, output / "report.html")
@@ -68,11 +70,16 @@ async def main() -> int:
         # Insufficient results is an expected report state, not a CI technical failure.
         code = 0
     except asyncio.TimeoutError:
-        result_info.update(status="technical_error", error_type="PIPELINE_TIMEOUT_240S")
+        result_info.update(status="technical_error", error_type="PIPELINE_TIMEOUT_240S",
+                           failed_stage=pipeline.stage if pipeline else "input_validation")
         code = 1
     except Exception as exc:
         # Only type names go in GitHub Actions logs/artifact; no secrets or page data.
-        result_info.update(status="technical_error", error_type=type(exc).__name__)
+        result_info.update(
+            status="technical_error", error_type=type(exc).__name__,
+            failed_stage=pipeline.stage if pipeline else "input_validation",
+            diagnostics=pipeline.last_diagnostics if pipeline else {},
+        )
         code = 1
     (output / "summary.json").write_text(
         json.dumps(result_info, ensure_ascii=False, indent=2), encoding="utf-8"
