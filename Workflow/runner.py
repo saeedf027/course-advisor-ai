@@ -18,7 +18,7 @@ from Agent.needs_schema import LearningNeedsProfile, verify_profile_against_inpu
 from Tools.search import (build_search_plan, run_search, SearchBatch, canonical_url,
                           prioritize_candidates, candidate_priority)
 from Tools.extract import extract_candidates, ExtractionBatch, ExtractedPage
-from Tools.validate import CourseReview, review_course
+from Tools.validate import CourseReview, review_course, recover_provider_from_page
 from Tools.rank import (
     FitAssessment, rank_courses, RankingResult, check_eligibility
 )
@@ -109,7 +109,10 @@ class Pipeline:
         all_candidates = search_result.candidates
         # Rank and diversify the full result pool once. The first six URLs
         # form round one; later rounds use only remaining search results.
-        ordered = prioritize_candidates(all_candidates, len(all_candidates)) if all_candidates else []
+        ordered = prioritize_candidates(
+            all_candidates, len(all_candidates),
+            topic=request.learning_request.topic,
+        ) if all_candidates else []
         page_budget = min(self.max_pages, len(ordered))
         selected_urls: set[str] = set()
         audit_by_url: dict[str, dict] = {}
@@ -118,7 +121,7 @@ class Pipeline:
             row = {
                 "url": candidate.url.split("?")[0],
                 "title": candidate.title[:160],
-                "priority_score": candidate_priority(candidate),
+                "priority_score": candidate_priority(candidate, request.learning_request.topic),
                 "selected_for_extraction": False,
                 "status": "not_selected_budget",
                 "reason": None,
@@ -149,7 +152,9 @@ class Pipeline:
                 return ("agent_extraction_errors", None, "invalid_agent_response")
             if not response.is_course or response.course is None:
                 return ("not_course_page", None, response.rejection_reason or "unknown")
-            review = review_course(response.course, page.raw_content, page.url)
+            candidate_title = candidate.title if candidate else ""
+            draft = recover_provider_from_page(\n                response.course, page.raw_content, candidate_title\n            )
+            review = review_course(draft, page.raw_content, page.url)
             if review.status == "incomplete":
                 return ("incomplete_source", None, ",".join(review.missing_fields[:8]))
             if review.status == "rejected":
