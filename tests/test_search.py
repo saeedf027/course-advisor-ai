@@ -4,7 +4,8 @@ import httpx
 
 from app.schemas import CourseAdvisorInput
 from Agent.needs_schema import LearningNeedsProfile
-from Tools.search import build_search_plan, canonical_url, merge_results, run_search
+from Tools.search import (build_search_plan, canonical_url, merge_results,
+                          run_search, CandidatePage, prioritize_candidates, candidate_priority)
 
 
 def request_and_profile():
@@ -80,3 +81,24 @@ def test_tavily_adapter_with_mock_transport():
     assert len(result.candidates) == 1
     assert result.total_results_before_dedup == 2
     assert not result.errors
+
+def test_course_likelihood_ranks_detail_before_blog_article():
+    pages = [
+        CandidatePage(url="https://example.edu/blog/best-courses", title="Best courses in data", snippet=""),
+        CandidatePage(url="https://academy.example.edu/courses/data-analysis-101",
+                      title="Data Analysis Course – Curriculum", snippet=""),
+    ]
+    assert candidate_priority(pages[1]) > candidate_priority(pages[0])
+    assert prioritize_candidates(pages, limit=1)[0].url == pages[1].url
+
+
+def test_course_candidates_diversify_hosts_in_small_budget():
+    pages = [
+        CandidatePage(url="https://school-a.example/courses/one", title="Course One", snippet=""),
+        CandidatePage(url="https://school-a.example/courses/two", title="Course Two", snippet=""),
+        CandidatePage(url="https://school-b.example/courses/three", title="Course Three", snippet=""),
+    ]
+    chosen = prioritize_candidates(pages, limit=2)
+    assert len(chosen) == 2
+    from urllib.parse import urlsplit
+    assert len({urlsplit(c.url).hostname for c in chosen}) == 2
