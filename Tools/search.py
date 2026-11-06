@@ -4,6 +4,7 @@ Step 03 only. Never treat a result as a verified course until the next stages.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from collections import defaultdict
@@ -142,25 +143,31 @@ def merge_results(query_results: list[tuple[str, list[dict]]], errors: list[str]
     )
 
 
-async def run_search(plan: SearchPlan, api_key: str | None = None,
-                     client: httpx.AsyncClient | None = None,
-                     max_results_per_query: int = 10) -> SearchBatch:
-    """Run a first-pass Tavily search. Inject client for tests.
+async def run_search(
+    plan: SearchPlan, api_key: str | None = None,
+    client: httpx.AsyncClient | None = None,
+    max_results_per_query: int = 10,
+    concurrency: int = 3,
+) -> SearchBatch:
+    """Concurrent but bounded first-pass Tavily search.
 
-    Uses a bounded sequential execution to avoid unbounded API spend.
+    API responses are stored in query order for stable provenance. No results
+    are invented if one of the independent searches fails.
     """
     key = api_key or os.getenv("TAVILY_API_KEY")
     if not key:
         raise RuntimeError("TAVILY_API_KEY is missing; set it in your local environment.")
     if not 1 <= max_results_per_query <= 20:
         raise ValueError("max_results_per_query must be in 1..20")
+    if not 1 <= concurrency <= 4:
+        raise ValueError("concurrency must be in 1..4")
     own_client = client is None
     if own_client:
-        client = httpx.AsyncClient(timeout=25)
-    query_results = []
-    errors = []
-    try:
-        for entry in plan.queries:
+        client = httpx.AsyncClient(timeout=20)
+    gate = asyncio.Semaphore(concurrency)
+
+    async def search_one(index: int, entry: SearchQuery):
+        async with gate:
             try:
                 response = await client.post(
                     SEARCH_ENDPOINT,
@@ -170,17 +177,25 @@ async def run_search(plan: SearchPlan, api_key: str | None = None,
                         "include_answer": False, "include_raw_content": False,
                         "include_images": False,
                     },
-                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                    headers={
+                        "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json",
+                    },
                 )
                 response.raise_for_status()
                 body = response.json()
                 if not isinstance(body, dict) or not isinstance(body.get("results"), list):
                     raise ValueError("Invalid Tavily response structure")
-                query_results.append((entry.query, body["results"]))
+                return (entry.query, body["results"], None)
             except (httpx.HTTPError, ValueError) as exc:
-                # Do not log request headers, credentials or potentially sensitive response data.
-                errors.append(f"Search failed for query #{len(query_results)+len(errors)+1}: {type(exc).__name__}")
-                query_results.append((entry.query, []))
+                return (entry.query, [], f"Search query #{index + 1} failed: {type(exc).__name__}")
+
+    try:
+        results = await asyncio.gather(
+            *(search_one(i, entry) for i, entry in enumerate(plan.queries))
+        )
+        query_results = [(query, items) for query, items, _ in results]
+        errors = [error for _, _, error in results if error is not None]
         return merge_results(query_results, errors)
     finally:
         if own_client:
