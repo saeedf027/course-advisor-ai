@@ -281,3 +281,25 @@ def test_adaptive_rounds_respect_strict_total_page_budget():
     assert result.diagnostics["discovery_rounds"] == 2
     assert len(calls) == 8
     assert len(result.ranking.preview) == 0
+
+def test_failing_report_stage_is_visible_without_exposing_source_data():
+    import pytest
+    from unittest.mock import patch
+
+    pipeline = Pipeline(agent=FakeAgent(), search=fake_search, extract=fake_extract)
+    with patch("Workflow.runner.render_report", side_effect=ValueError("private token in page")):
+        with pytest.raises(ValueError):
+            asyncio.run(pipeline.run(input_request(), demo=True))
+    assert pipeline.stage == "report_rendering"
+    assert pipeline.last_diagnostics["eligible_before_evaluation"] == 6
+
+
+def test_pipeline_exposes_source_extraction_stage_when_provider_fails():
+    import pytest
+    async def broken_extract(batch, max_urls):
+        raise ValueError("untrusted content")
+    pipeline = Pipeline(agent=FakeAgent(), search=fake_search, extract=broken_extract)
+    with pytest.raises(ValueError):
+        asyncio.run(pipeline.run(input_request(), demo=True))
+    assert pipeline.stage == "source_extraction"
+    assert pipeline.last_diagnostics["pages_attempted"] == 0
